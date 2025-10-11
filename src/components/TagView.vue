@@ -54,7 +54,7 @@
         <el-button v-else size="small" @click.stop="showTagInput" class="add-tag-btn">
             + 添加标签
         </el-button>
-        <span class="tag-count">{{ modelValue.length }}/10</span>
+        <span class="tag-count">{{ modelValue.length }}/12</span>
     </div>
 </template>
 
@@ -116,8 +116,8 @@ const addTag = (keepInput = false) => {
     }
 
     // 检查标签数量上限
-    if (props.modelValue.length >= 10) {
-        utilsStore.showMessage('最多只能添加10个标签', 'warning')
+    if (props.modelValue.length >= 12) {
+        utilsStore.showMessage('最多只能添加12个标签', 'warning')
         if (!keepInput) {
             inputVisible.value = false
         }
