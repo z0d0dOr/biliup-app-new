@@ -210,6 +210,8 @@ pub async fn run() {
             get_topic_list,
             search_topics,
             get_season_list,
+            get_web_archives_pubing_for_publish_time,
+            get_season_videos_for_publish_time,
             get_video_detail,
             get_video_season,
             switch_season,

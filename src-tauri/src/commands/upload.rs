@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex;
-use tracing::info;
+use tracing::{error, info};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UploadProgress {
@@ -16,6 +16,78 @@ pub struct UploadProgress {
     pub progress: f64,
     pub status: String,
     pub message: String,
+}
+
+fn get_bilibili_csrf(bilibili: &biliup::bilibili::BiliBili) -> Result<String, String> {
+    let csrf = bilibili
+        .login_info
+        .cookie_info
+        .get("cookies")
+        .and_then(|c| c.as_array())
+        .ok_or("Cookie error")?
+        .iter()
+        .filter_map(|c| c.as_object())
+        .find(|c| c["name"] == "bili_jct")
+        .ok_or("JCT error")?
+        .get("value")
+        .and_then(|v| v.as_str())
+        .ok_or("CSRF error")?;
+    Ok(csrf.to_string())
+}
+
+async fn log_edit_by_web_http_debug(
+    bilibili: &biliup::bilibili::BiliBili,
+    studio: &biliup::bilibili::Studio,
+) {
+    let csrf = match get_bilibili_csrf(bilibili) {
+        Ok(v) => v,
+        Err(e) => {
+            error!("edit_by_web debug: get csrf failed: {}", e);
+            return;
+        }
+    };
+
+    let ts = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(v) => v.as_millis(),
+        Err(e) => {
+            error!("edit_by_web debug: system time error: {}", e);
+            return;
+        }
+    };
+
+    let url = format!("https://member.bilibili.com/x/vu/web/edit?t={ts}&csrf={csrf}");
+    match bilibili.client.post(&url).json(studio).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let content_type = resp
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+            match resp.bytes().await {
+                Ok(bytes) => {
+                    let raw_body = String::from_utf8_lossy(&bytes);
+                    error!(
+                        "edit_by_web decode debug: status={} content_type={} body_len={}",
+                        status,
+                        content_type,
+                        bytes.len()
+                    );
+                    error!("edit_by_web decode debug raw body: {}", raw_body);
+                }
+                Err(e) => {
+                    error!(
+                        "edit_by_web decode debug: status={} content_type={} read body failed: {}",
+                        status, content_type, e
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            error!("edit_by_web decode debug request failed: {}", e);
+        }
+    }
 }
 
 /// 创建上传任务
@@ -157,21 +229,26 @@ pub async fn submit(app: AppHandle, uid: u64, form: TemplateConfig) -> Result<Va
     } else {
         let bilibili_form = form.into_bilibili_form();
         let studio = bilibili_form.try_into_studio().map_err(|e| e.to_string())?;
-        match app_data
+        let bilibili = app_data
             .clients
             .lock()
             .await
             .get(&uid)
             .ok_or("用户未登录或不存在")?
             .bilibili
-            .edit_by_web(&studio)
-            .await
-        {
+            .clone();
+        match bilibili.edit_by_web(&studio).await {
             Ok(resp) => {
                 info!("编辑稿件成功：{resp}");
                 Ok(resp["data"].clone())
             }
-            Err(e) => Err(e.to_string()),
+            Err(e) => {
+                let err_text = e.to_string();
+                if err_text.contains("error decoding response body") {
+                    log_edit_by_web_http_debug(&bilibili, &studio).await;
+                }
+                Err(err_text)
+            }
         }
     }
 }

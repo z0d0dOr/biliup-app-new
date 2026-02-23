@@ -107,6 +107,34 @@ export const useUtilsStore = defineStore('template', () => {
         return hasSeason.value
     }
 
+    const getSeasonVideosForPublishTime = async (uid: number, seasonId: number) => {
+        try {
+            const result = await invoke('get_season_videos_for_publish_time', { uid, seasonId })
+            return result as {
+                season_id: number
+                season_title: string
+                videos: any[]
+            }
+        } catch (error) {
+            console.error('获取合集视频列表失败:', error)
+            throw error
+        }
+    }
+
+    const getWebArchivesPubingForPublishTime = async (uid: number) => {
+        try {
+            const result = await invoke('get_web_archives_pubing_for_publish_time', { uid })
+            return result as {
+                videos: any[]
+                season_count?: number
+                source?: string
+            }
+        } catch (error) {
+            console.error('获取进行中稿件列表失败:', error)
+            throw error
+        }
+    }
+
     const uploadCover = async (uid: number, file: string) => {
         if (!file) {
             return undefined
@@ -231,6 +259,8 @@ export const useUtilsStore = defineStore('template', () => {
         getVideoDetail,
         hasSeason,
         getSeasonList,
+        getWebArchivesPubingForPublishTime,
+        getSeasonVideosForPublishTime,
         getVideoSeason,
         switchSeason,
         showMessage,

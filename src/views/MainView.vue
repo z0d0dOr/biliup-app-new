@@ -34,6 +34,12 @@
                     <el-button type="primary" size="small" @click="checkUpdate" title="检查更新">
                         检查更新
                     </el-button>
+                    <el-button type="warning" size="small" plain @click="switchToPublishTimeEditMode">
+                        修改发布时间
+                    </el-button>
+                    <el-button type="success" size="small" plain @click="switchToUploadMode">
+                        上传视频
+                    </el-button>
                 </div>
                 <div class="header-right">
                     <!-- 上传队列下拉框 -->
@@ -229,10 +235,14 @@
             </el-aside>
 
             <!-- 主要内容区域 -->
-            <el-main class="main-content" v-if="currentForm">
+            <el-main class="main-content" v-if="selectedUser || currentForm || isPublishTimeEditMode">
                 <div class="content-wrapper" ref="contentWrapperRef">
                     <div v-if="!selectedUser" class="no-selection">
                         <el-empty description="请选择用户和模板开始使用" />
+                    </div>
+
+                    <div v-else-if="isPublishTimeEditMode" class="publish-time-editor-shell">
+                        <PublishTimeEditor :selected-user="selectedUser" />
                     </div>
 
                     <div v-else-if="!currentTemplateName" class="no-template">
@@ -243,7 +253,7 @@
                         </el-empty>
                     </div>
 
-                    <div v-else class="upload-form-container">
+                    <div v-else-if="currentForm" class="upload-form-container">
                         <div class="form-header">
                             <div class="template-name-container">
                                 <h3 class="edit-bv-template-disaplay" v-if="currentTemplate?.aid">
@@ -1078,6 +1088,7 @@ import VideoList from '../components/VideoList.vue'
 import UserList from '../components/UserList.vue'
 import VideoStatus from '../components/VideoStatus.vue'
 import TagView from '../components/TagView.vue'
+import PublishTimeEditor from '../components/PublishTimeEditor.vue'
 
 const authStore = useAuthStore()
 const userConfigStore = useUserConfigStore()
@@ -1098,6 +1109,16 @@ const coverLoading = ref<boolean>(false)
 // 响应式数?
 const selectedUser = ref<any>(null)
 const currentTemplateName = ref<string>('')
+type MainPanelMode = 'upload' | 'publishTimeEdit'
+const mainPanelMode = ref<MainPanelMode>('upload')
+const isUploadMode = computed(() => mainPanelMode.value === 'upload')
+const isPublishTimeEditMode = computed(() => mainPanelMode.value === 'publishTimeEdit')
+const switchToUploadMode = () => {
+    mainPanelMode.value = 'upload'
+}
+const switchToPublishTimeEditMode = () => {
+    mainPanelMode.value = 'publishTimeEdit'
+}
 const showNewTemplateDialog = ref(false)
 const showLoginDialog = ref(false)
 const showGlobalConfigDialog = ref(false)
@@ -1550,6 +1571,7 @@ watch(
 )
 
 let keyboardCleanup: (() => void) | null = null
+let dragAndDropCleanup: (() => void) | null = null
 
 const forwardConsole = (fnName: keyof Console, logger: (level: string, ...args: any[]) => void) => {
     const original = console[fnName] as (...args: any[]) => void
@@ -1562,6 +1584,7 @@ const forwardConsole = (fnName: keyof Console, logger: (level: string, ...args: 
 onMounted(async () => {
     await initializeData()
     await setupDragAndDrop()
+    dragAndDropCleanup = setupDomFileDragDrop()
     keyboardCleanup = await setupKeyboardShortcuts()
 
     forwardConsole('log', utilsStore.log)
@@ -1578,6 +1601,10 @@ onMounted(async () => {
 onUnmounted(() => {
     if (keyboardCleanup) {
         keyboardCleanup()
+    }
+    if (dragAndDropCleanup) {
+        dragAndDropCleanup()
+        dragAndDropCleanup = null
     }
 
     // 清理自动提交间隔棢?
@@ -1750,6 +1777,82 @@ const setupDragAndDrop = async () => {
     } catch (error) {
         console.error('设置拖拽监听失败: ', error)
         utilsStore.showMessage(`设置拖拽监听失败: ${error}`, 'error')
+    }
+}
+
+const isDomFileDragEvent = (event: DragEvent) => {
+    const dataTransfer = event.dataTransfer
+    if (!dataTransfer) return false
+    return Array.from(dataTransfer.types || []).includes('Files')
+}
+
+const buildDomDroppedFilePayload = (event: DragEvent) => {
+    const files = Array.from(event.dataTransfer?.files || [])
+    const paths = files
+        .map(file => {
+            const anyFile = file as File & { path?: string }
+            return anyFile.path || file.webkitRelativePath || ''
+        })
+        .filter(path => !!path)
+    return {
+        files,
+        paths,
+        value: paths.join('\n')
+    }
+}
+
+const setupDomFileDragDrop = () => {
+    let dragDepth = 0
+
+    const handleDragEnter = (event: DragEvent) => {
+        if (!isDomFileDragEvent(event)) return
+        if (!isUploadMode.value) return
+        event.preventDefault()
+        dragDepth += 1
+        isDragOver.value = true
+    }
+
+    const handleDragOver = (event: DragEvent) => {
+        if (!isDomFileDragEvent(event)) return
+        if (!isUploadMode.value) return
+        event.preventDefault()
+        if (event.dataTransfer) {
+            event.dataTransfer.dropEffect = 'copy'
+        }
+        isDragOver.value = true
+    }
+
+    const handleDragLeave = (event: DragEvent) => {
+        if (!isDomFileDragEvent(event)) return
+        if (!isUploadMode.value) return
+        event.preventDefault()
+        dragDepth = Math.max(0, dragDepth - 1)
+        if (dragDepth === 0) {
+            isDragOver.value = false
+        }
+    }
+
+    const handleDrop = async (event: DragEvent) => {
+        if (!isDomFileDragEvent(event)) return
+        if (!isUploadMode.value) return
+        event.preventDefault()
+        dragDepth = 0
+        isDragOver.value = false
+        await handleDroppedFiles(buildDomDroppedFilePayload(event))
+    }
+
+    document.addEventListener('dragenter', handleDragEnter)
+    document.addEventListener('dragover', handleDragOver)
+    document.addEventListener('dragleave', handleDragLeave)
+    document.addEventListener('drop', handleDrop)
+
+    return () => {
+        document.removeEventListener('dragenter', handleDragEnter)
+        document.removeEventListener('dragover', handleDragOver)
+        document.removeEventListener('dragleave', handleDragLeave)
+        document.removeEventListener('drop', handleDrop)
+        dragDepth = 0
+        isDragOver.value = false
     }
 }
 

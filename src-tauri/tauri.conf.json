@@ -14,7 +14,7 @@
         "title": "biliup-app",
         "width": 800,
         "height": 700,
-        "dragDropEnabled": true
+        "dragDropEnabled": false
       }
     ],
     "security": {
