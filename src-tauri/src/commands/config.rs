@@ -14,7 +14,7 @@ pub struct TemplateCommandResponse {
     pub template: Option<TemplateConfig>,
 }
 
-/// 加载配置文件
+/// ļ
 #[tauri::command]
 pub async fn load_config(app: AppHandle) -> Result<ConfigRoot, String> {
     let data = app.state::<Mutex<AppData>>();
@@ -22,7 +22,7 @@ pub async fn load_config(app: AppHandle) -> Result<ConfigRoot, String> {
     Ok(data.lock().await.config.lock().await.clone())
 }
 
-/// 保存配置文件
+/// ļ
 #[tauri::command]
 pub async fn save_config(app: AppHandle) -> Result<bool, String> {
     let data = app.state::<Mutex<AppData>>();
@@ -32,8 +32,8 @@ pub async fn save_config(app: AppHandle) -> Result<bool, String> {
         .config
         .lock()
         .await
-        .save_to_file(&get_config_json_path().map_err(|e| format!("获取配置路径失败: {e}"))?)
-        .map_err(|e| format!("保存配置失败: {e}"))?;
+        .save_to_file(&get_config_json_path().map_err(|e| format!("ȡ·ʧ: {e}"))?)
+        .map_err(|e| format!("ʧ: {e}"))?;
     Ok(true)
 }
 
@@ -48,7 +48,7 @@ pub async fn save_user_config(
     auto_edit: u8,
 ) -> Result<bool, String> {
     let data = app.state::<Mutex<AppData>>();
-    info!("用户({uid})配置已保存");
+    info!("û({uid})ѱ");
 
     data.lock()
         .await
@@ -56,7 +56,7 @@ pub async fn save_user_config(
         .lock()
         .await
         .save_user_config(uid, line, proxy, limit, watermark, auto_edit)
-        .map_err(|e| format!("保存用户配置失败: {e}"))?;
+        .map_err(|e| format!("ûʧ: {e}"))?;
     Ok(true)
 }
 
@@ -67,16 +67,26 @@ pub async fn save_global_config(
     auto_start: bool,
     auto_upload: bool,
     log_level: String,
+    translation_api_url: String,
+    translation_api_key: String,
+    translation_model: String,
+    translation_prompt: String,
+    translation_auto: bool,
 ) -> Result<bool, String> {
     let data = app.state::<Mutex<AppData>>();
 
-    info!("全局配置已保存");
+    info!("ȫѱ");
 
     data.lock().await.config.lock().await.save_global_config(
         max_curr,
         auto_start,
         auto_upload,
         log_level,
+        translation_api_url,
+        translation_api_key,
+        translation_model,
+        translation_prompt,
+        translation_auto,
     );
 
     data.lock()
@@ -101,11 +111,11 @@ pub async fn delete_user_template(
         .lock()
         .await
         .delete_user_template(uid, &template_name);
-    info!("删除模板: {}", template_name);
+    info!("ɾģ: {}", template_name);
 
     Ok(TemplateCommandResponse {
         success: true,
-        message: "模板删除成功".to_string(),
+        message: "ģɾɹ".to_string(),
         template: None,
     })
 }
@@ -125,11 +135,11 @@ pub async fn update_user_template(
         .lock()
         .await
         .add_user_template(uid, &template_name, template);
-    info!("更新模板: {}", template_name);
+    info!("ģ: {}", template_name);
 
     Ok(TemplateCommandResponse {
         success: true,
-        message: "模板更新成功".to_string(),
+        message: "ģ³ɹ".to_string(),
         template: Some(updated),
     })
 }
@@ -149,11 +159,11 @@ pub async fn add_user_template(
         .lock()
         .await
         .add_user_template(uid, &template_name, template);
-    info!("添加模板: {}", template_name);
+    info!("ģ: {}", template_name);
 
     Ok(TemplateCommandResponse {
         success: true,
-        message: "模板添加成功".to_string(),
+        message: "ģӳɹ".to_string(),
         template: Some(added),
     })
 }

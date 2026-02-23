@@ -16,11 +16,12 @@ export interface TemplateConfig {
     tid: number // 分区ID
     cover: string // 封面URL
     title: string
+    title_prefix: string
     desc: string
     desc_v2?: string
-    dynamic: string // 粉丝动态
+    dynamic: string // 粉丝动?
     subtitle: { open: number; lan: string }
-    tag: string // 逗号分隔的标签
+    tag: string // 逗号分隔的标?
     videos: any[]
     dtime?: number // 定时发布时间, 10位时间戳
     open_subtitle: boolean
@@ -49,15 +50,20 @@ interface UserConfig {
     limit: number
     watermark: number
     auto_edit: number
-    templates: Record<string, TemplateConfig> // 模板名 -> 模板配置
+    templates: Record<string, TemplateConfig> // 模板?-> 模板配置
 }
 
-// 配置根接口
+// 配置根接?
 interface ConfigRoot {
     max_curr: number
     auto_upload: boolean
     auto_start: boolean
     log_level: string
+    translation_api_url: string
+    translation_api_key: string
+    translation_model: string
+    translation_prompt: string
+    translation_auto: boolean
     config: Record<number, UserConfig> // uid -> 用户配置
 }
 
@@ -77,7 +83,7 @@ interface TemplateCommandResponse {
 export const useUserConfigStore = defineStore('userConfig', () => {
     const configRoot = ref<ConfigRoot | null>(null)
     const configBase = ref<ConfigRoot | null>(null)
-    const loginUsers = ref<User[]>([]) // 存储登录用户列表
+    const loginUsers = ref<User[]>([]) // 洢¼ûб
     const loading = ref(false)
     const error = ref<string | null>(null)
 
@@ -101,14 +107,14 @@ export const useUserConfigStore = defineStore('userConfig', () => {
             result.push({
                 user,
                 templates,
-                expanded: false // 这个状态需要单独管理
+                expanded: false // 这个状需要单独管?
             })
         }
 
         return result
     })
 
-    // 用户展开状态管理
+    // 用户展开状管?
     const userExpandedState = ref<Record<number, boolean>>({})
 
     const allUsers = computed(() => userTemplates.value.map(ut => ut.user))
@@ -116,7 +122,7 @@ export const useUserConfigStore = defineStore('userConfig', () => {
         userTemplates.value.reduce((sum, ut) => sum + ut.templates.length, 0)
     )
 
-    // 获取带有展开状态的用户模板列表（用于UI显示）
+    // 获取带有展开状的用户模板列表（用于UI显示?
     const userTemplatesWithExpandedState = computed(() => {
         return userTemplates.value.map(ut => ({
             ...ut,
@@ -131,6 +137,7 @@ export const useUserConfigStore = defineStore('userConfig', () => {
         tid: 0,
         cover: '',
         title: '',
+        title_prefix: '',
         desc: '',
         desc_v2: undefined,
         dynamic: '',
@@ -207,43 +214,43 @@ export const useUserConfigStore = defineStore('userConfig', () => {
         }
     }
 
-    // 构建用户模板列表 - 现在只需要设置登录用户
+    // 构建用户模板列表 - 现在只需要设置登录用?
     const buildUserTemplates = async (users: User[]) => {
-        // 确保配置已加载
+        // 确保配置已加?
         if (!configRoot.value) {
             await loadConfig()
         }
 
-        // 设置登录用户列表，userTemplates 会自动通过计算属性更新
+        // 设置登录用户列表，userTemplates 会自动过计算属更?
         loginUsers.value = users
 
         return userTemplatesWithExpandedState.value
     }
 
-    // 切换用户展开/收起状态
+    // 切换用户展开/收起状?
     const toggleUserExpanded = (userUid: number) => {
         userExpandedState.value[userUid] = !userExpandedState.value[userUid]
     }
 
-    // 获取指定用户的模板
+    // 获取指定用户的模?
     const getUserTemplates = (userUid: number) => {
         const userTemplate = userTemplates.value.find(ut => ut.user.uid === userUid)
         return userTemplate?.templates || []
     }
 
-    // 获取指定用户的指定模板
+    // 获取指定用户的指定模?
     const getUserTemplate = (userUid: number, templateName: string) => {
         const userTemplate = userTemplates.value.find(ut => ut.user.uid === userUid)
         return userTemplate?.templates.find(t => t.name === templateName)?.config
     }
 
-    // 为指定用户添加模板
+    // 为指定用户添加模?
     const addUserTemplate = async (
         userUid: number,
         templateName: string,
         templateConfig?: TemplateConfig
     ) => {
-        // 确保配置已加载
+        // 确保配置已加?
         if (!configRoot.value) {
             await loadConfig()
         }
@@ -254,23 +261,28 @@ export const useUserConfigStore = defineStore('userConfig', () => {
                 auto_start: true,
                 auto_upload: true,
                 log_level: 'info',
+                translation_api_url: '',
+                translation_api_key: '',
+                translation_model: '',
+                translation_prompt: '',
+                translation_auto: false,
                 config: {}
             }
         }
 
-        // 找到对应的用户
+        // 找到对应的用?
         const user = userTemplates.value.find(ut => ut.user.uid === userUid)?.user
         if (!user) {
             throw new Error('用户不存在')
         }
 
-        // 查找或创建用户配置
+        // 查找或创建用户配?
         let userConfig = configRoot.value.config[userUid]
         if (!userConfig) {
             throw new Error('用户配置不存在')
         }
 
-        // 检查模板名是否已存在
+        // 棢查模板名是否已存?
         if (userConfig.templates[templateName]) {
             throw new Error('模板名已存在')
         }
@@ -296,7 +308,7 @@ export const useUserConfigStore = defineStore('userConfig', () => {
         return true
     }
 
-    // 删除指定用户的模板
+    // 删除指定用户的模?
     const removeUserTemplate = async (userUid: number, templateName: string) => {
         if (!configRoot.value) {
             throw new Error('配置未加载')
@@ -330,7 +342,7 @@ export const useUserConfigStore = defineStore('userConfig', () => {
         return true
     }
 
-    // 更新指定用户的模板
+    // 更新指定用户的模?
     const updateUserTemplate = async (
         userUid: number,
         templateName: string,
@@ -438,7 +450,7 @@ export const useUserConfigStore = defineStore('userConfig', () => {
     }
 
     const updateGlobalConfig = async (
-        updates: Partial<Pick<ConfigRoot, 'max_curr' | 'auto_upload' | 'auto_start' | 'log_level'>>
+        updates: Partial<Pick<ConfigRoot, 'max_curr' | 'auto_upload' | 'auto_start' | 'log_level' | 'translation_api_url' | 'translation_api_key' | 'translation_model' | 'translation_prompt' | 'translation_auto'>>
     ) => {
         if (!configRoot.value) {
             throw new Error('配置未加载')
@@ -452,7 +464,12 @@ export const useUserConfigStore = defineStore('userConfig', () => {
                 maxCurr: configRoot.value.max_curr,
                 autoStart: configRoot.value.auto_start,
                 autoUpload: configRoot.value.auto_upload,
-                logLevel: configRoot.value.log_level
+                logLevel: configRoot.value.log_level,
+                translationApiUrl: configRoot.value.translation_api_url,
+                translationApiKey: configRoot.value.translation_api_key,
+                translationModel: configRoot.value.translation_model,
+                translationPrompt: configRoot.value.translation_prompt,
+                translationAuto: configRoot.value.translation_auto
             })
             // 保存配置
             await saveConfig()
@@ -464,14 +481,14 @@ export const useUserConfigStore = defineStore('userConfig', () => {
     }
 
     return {
-        // 状态
+        // 状?
         configRoot,
         configBase,
-        userTemplates: userTemplatesWithExpandedState, // 导出带有展开状态的版本
+        userTemplates: userTemplatesWithExpandedState, // չ״İ汾
         loading,
         error,
 
-        // 计算属性
+        // 计算属?
         allUsers,
         totalTemplateCount,
 

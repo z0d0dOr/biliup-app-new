@@ -1,7 +1,15 @@
 <template>
     <div class="video-list-container">
-        <!-- 视频操作按钮组 -->
         <div class="video-buttons-group">
+            <el-button
+                type="warning"
+                plain
+                size="small"
+                @click="reverseVideoOrder"
+                :disabled="!videos || videos.length < 2"
+            >
+                倒序
+            </el-button>
             <el-button type="primary" @click="$emit('selectVideo')" size="small">
                 <el-icon><upload-filled /></el-icon>
                 选择视频文件
@@ -33,161 +41,152 @@
         </div>
         <div class="upload-tip">
             <span v-if="!isDragOver"> 支持 MP4、AVI、MOV、MKV、WMV、FLV、M4V、WEBM 等格式 </span>
-            <span v-else class="drag-active-tip"> 💡 松开鼠标即可添加文件到当前模板 </span>
+            <span v-else class="drag-active-tip"> 松开鼠标即可添加文件到当前模板 </span>
         </div>
 
-        <!-- 已上传文件列表 -->
         <div v-if="videos && videos.length > 0" class="uploaded-videos-section">
-            <div class="uploaded-videos-list">
-                <div
-                    v-for="(video, index) in updatedVideos"
-                    :key="video.id"
-                    class="uploaded-video-item"
-                    :class="getVideoWarningClass(video)"
-                    :title="getVideoWarningTooltip(video)"
-                >
-                    <!-- 序号输入框 -->
-                    <div class="video-order">
-                        <el-input-number
-                            :model-value="index + 1"
-                            :min="1"
-                            :max="updatedVideos.length"
-                            size="small"
-                            controls-position="right"
-                            :step="-1"
-                            @change="(newOrder: number) => handleReorderVideo(index, newOrder - 1)"
-                            class="order-input"
-                        />
-                    </div>
+            <template v-for="group in displayVideoGroups" :key="group.key">
+                <div class="uploaded-videos-list">
+                    <div v-if="group.grouped" class="video-group-title">{{ group.label }}</div>
+                    <div
+                        v-for="video in group.videos"
+                        :key="video.id"
+                        class="uploaded-video-item"
+                        :class="getVideoWarningClass(video)"
+                        :title="getVideoWarningTooltip(video)"
+                    >
+                        <div class="video-order">
+                            <el-input-number
+                                :model-value="getVideoGlobalIndex(video.id) + 1"
+                                :min="1"
+                                :max="updatedVideos.length"
+                                size="small"
+                                controls-position="right"
+                                :step="-1"
+                                @change="
+                                    (newOrder: number) =>
+                                        handleReorderVideoById(video.id, newOrder - 1)
+                                "
+                                class="order-input"
+                            />
+                        </div>
 
-                    <div class="video-status-icon">
-                        <!-- 上传完成 -->
-                        <el-icon v-if="video.status === 'Completed'" class="status-complete">
-                            <circle-check />
-                        </el-icon>
-                        <!-- 上传中 -->
-                        <el-icon v-else-if="video.status === 'Running'" class="status-uploading">
-                            <loading />
-                        </el-icon>
-                        <!-- 失败 -->
-                        <el-icon v-else-if="video.status === 'Failed'" class="status-failed">
-                            <circle-close />
-                        </el-icon>
-                        <!-- 暂停 -->
-                        <el-icon v-else-if="video.status === 'Paused'" class="status-paused">
-                            <video-pause />
-                        </el-icon>
-                        <!-- 已取消 -->
-                        <el-icon v-else-if="video.status === 'Cancelled'" class="status-cancelled">
-                            <circle-close />
-                        </el-icon>
-                        <!-- 待上传/等待中 -->
-                        <el-icon v-else class="status-pending">
-                            <cloudy />
-                        </el-icon>
-                    </div>
-                    <div class="video-info">
-                        <!-- 文件名和状态在同一行 -->
-                        <div class="video-title-row">
-                            <div class="video-title-container">
-                                <div v-if="editingFileId === video.id" class="video-title-edit">
-                                    <el-input
-                                        v-model="editingTitle"
+                        <div class="video-status-icon">
+                            <el-icon v-if="video.status === 'Completed'" class="status-complete">
+                                <circle-check />
+                            </el-icon>
+                            <el-icon v-else-if="video.status === 'Running'" class="status-uploading">
+                                <loading />
+                            </el-icon>
+                            <el-icon v-else-if="video.status === 'Failed'" class="status-failed">
+                                <circle-close />
+                            </el-icon>
+                            <el-icon v-else-if="video.status === 'Paused'" class="status-paused">
+                                <video-pause />
+                            </el-icon>
+                            <el-icon v-else-if="video.status === 'Cancelled'" class="status-cancelled">
+                                <circle-close />
+                            </el-icon>
+                            <el-icon v-else class="status-pending">
+                                <cloudy />
+                            </el-icon>
+                        </div>
+                        <div class="video-info">
+                            <div class="video-title-row">
+                                <div class="video-title-container">
+                                    <div v-if="editingFileId === video.id" class="video-title-edit">
+                                        <el-input
+                                            v-model="editingTitle"
+                                            size="small"
+                                            @keyup.enter="saveVideoTitle(video.id)"
+                                            @blur="saveVideoTitle(video.id)"
+                                            @keyup.esc="cancelEditVideoTitle"
+                                            ref="videoTitleInput"
+                                        />
+                                    </div>
+                                    <div
+                                        v-else
+                                        class="video-title"
+                                        @click="
+                                            startEditVideoTitle(
+                                                video.id,
+                                                video.title || video.videoname
+                                            )
+                                        "
+                                    >
+                                        {{ video.title || video.videoname }}
+                                        <el-icon class="edit-icon"><edit /></el-icon>
+                                    </div>
+                                </div>
+
+                                <div class="video-status">
+                                    <span
+                                        class="status-text"
+                                        :class="{
+                                            complete: video.status === 'Completed',
+                                            uploading: video.status === 'Running',
+                                            pending:
+                                                video.status === 'Waiting' ||
+                                                video.status === 'Pending',
+                                            failed: video.status === 'Failed',
+                                            paused: video.status === 'Paused',
+                                            cancelled: video.status === 'Cancelled'
+                                        }"
+                                    >
+                                        {{ getStatusText(video.status || 'Waiting') }}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div class="progress-section">
+                                <div
+                                    class="progress-bar-container"
+                                    v-if="video.status !== 'Completed' && video.status !== 'Failed'"
+                                >
+                                    <el-progress
+                                        :percentage="video.progress"
+                                        :show-text="false"
                                         size="small"
-                                        @keyup.enter="saveVideoTitle(video.id)"
-                                        @blur="saveVideoTitle(video.id)"
-                                        @keyup.esc="cancelEditVideoTitle"
-                                        ref="videoTitleInput"
-                                        maxlength="80"
+                                        :stroke-width="3"
+                                        :color="getProgressColor(video.status)"
                                     />
+                                    <span class="progress-text"
+                                        >{{ formatUploadProgress(video) }}%</span
+                                    >
+                                </div>
+                                <div v-if="video.status === 'Failed'" class="error-message">
+                                    {{ video.errorMessage || '上传失败' }}
                                 </div>
                                 <div
-                                    v-else
-                                    class="video-title"
-                                    @click="
-                                        startEditVideoTitle(
-                                            video.id,
-                                            video.title || video.videoname
-                                        )
-                                    "
+                                    class="upload-speed"
+                                    v-if="video.status === 'Running' && video.speed > 0"
                                 >
-                                    {{ video.title || video.videoname }}
-                                    <el-icon class="edit-icon"><edit /></el-icon>
+                                    {{ formatUploadSpeed(video) }}
                                 </div>
                             </div>
-
-                            <!-- 状态标签移动到文件名右侧 -->
-                            <div class="video-status">
-                                <span
-                                    class="status-text"
-                                    :class="{
-                                        complete: video.status === 'Completed',
-                                        uploading: video.status === 'Running',
-                                        pending:
-                                            video.status === 'Waiting' ||
-                                            video.status === 'Pending',
-                                        failed: video.status === 'Failed',
-                                        paused: video.status === 'Paused',
-                                        cancelled: video.status === 'Cancelled'
-                                    }"
-                                >
-                                    {{ getStatusText(video.status || 'Waiting') }}
-                                </span>
-                            </div>
+                            <span
+                                class="completed-time"
+                                v-if="video.status === 'Completed' && video.finished_at"
+                            >
+                                {{ formatFinishedTime(video.finished_at) }}
+                            </span>
                         </div>
 
-                        <!-- 进度条区域 -->
-                        <div class="progress-section">
-                            <div
-                                class="progress-bar-container"
-                                v-if="video.status !== 'Completed' && video.status !== 'Failed'"
+                        <div class="video-actions">
+                            <el-button
+                                type="danger"
+                                size="small"
+                                text
+                                @click="handleRemoveFile(video.id)"
                             >
-                                <el-progress
-                                    :percentage="video.progress"
-                                    :show-text="false"
-                                    size="small"
-                                    :stroke-width="3"
-                                    :color="getProgressColor(video.status)"
-                                />
-                                <span class="progress-text"
-                                    >{{ formatUploadProgress(video) }}%</span
-                                >
-                            </div>
-                            <div v-if="video.status === 'Failed'" class="error-message">
-                                {{ video.errorMessage || '上传失败' }}
-                            </div>
-                            <div
-                                class="upload-speed"
-                                v-if="video.status === 'Running' && video.speed > 0"
-                            >
-                                {{ formatUploadSpeed(video) }}
-                            </div>
+                                <el-icon><delete /></el-icon>
+                            </el-button>
                         </div>
-                        <!-- 完成时间显示 -->
-                        <span
-                            class="completed-time"
-                            v-if="video.status === 'Completed' && video.finished_at"
-                        >
-                            {{ formatFinishedTime(video.finished_at) }}
-                        </span>
-                    </div>
-
-                    <!-- 文件操作按钮 -->
-                    <div class="video-actions">
-                        <el-button
-                            type="danger"
-                            size="small"
-                            text
-                            @click="handleRemoveFile(video.id)"
-                        >
-                            <el-icon><delete /></el-icon>
-                        </el-button>
                     </div>
                 </div>
-            </div>
+            </template>
         </div>
 
-        <!-- 文件夹监控对话框 -->
         <FloderWatch
             v-model="showFolderWatchDialog"
             :current-videos="updatedVideos"
@@ -236,29 +235,30 @@ const emit = defineEmits<{
     createUpload: []
     addVideosToForm: [videos: any[]]
     submitTemplate: []
+    videosReversed: []
 }>()
 
-// 文件编辑状态
+// ļ༭״̬
 const editingFileId = ref<string | null>(null)
 const editingTitle = ref('')
 const videoTitleInput = ref()
 const uploadStore = useUploadStore()
 
-// 文件夹监控对话框状态
+// ļмضԻ״̬
 const showFolderWatchDialog = ref(false)
 
-// 模板标题
+// ģ
 const templateTitle = computed(() => props.templateTitle)
 
-// 用于触发时间更新的响应式变量
+// ڴʱµӦʽ
 const currentTime = ref(Date.now())
 let timeUpdateTimer: number | null = null
 
-// 定时更新当前时间，用于相对时间的实时更新
+// ʱµǰʱ䣬ʱʵʱ
 onMounted(() => {
     timeUpdateTimer = setInterval(() => {
         currentTime.value = Date.now()
-    }, 60000) // 每分钟更新一次
+    }, 60000) // ÿӸһ
 })
 
 onUnmounted(() => {
@@ -267,7 +267,7 @@ onUnmounted(() => {
     }
 })
 
-// 实时更新的视频数据计算属性
+// ʵʱµƵݼ
 const updatedVideos = computed(() => {
     if (!props.videos || props.videos.length === 0) return []
 
@@ -302,7 +302,7 @@ const updatedVideos = computed(() => {
             }
         }
 
-        // 检查是否有变化
+        // Ƿб仯
         if (
             originalVideo.complete !== updatedVideo.complete ||
             originalVideo.errorMessage !== updatedVideo.errorMessage ||
@@ -319,18 +319,111 @@ const updatedVideos = computed(() => {
         return updatedVideo
     })
 
-    // 如果有变化，同步更新回 props.videos
+    // б仯ͬ» props.videos
     if (hasChanges) {
-        // 使用 nextTick 确保在下一个事件循环中更新，避免无限循环
+        // ʹ nextTick ȷһ¼ѭи£ѭ
         nextTick(() => {
-            emit('update:videos', updatedList)
+            const latestVideos = props.videos || []
+            if (!latestVideos.length) {
+                emit('update:videos', updatedList)
+                return
+            }
+
+            const getVideoSyncKey = (video: any): string =>
+                String(video?.id || video?.path || video?.filename || '')
+
+            const updatedByKey = new Map<string, any>()
+            for (const video of updatedList) {
+                const key = getVideoSyncKey(video)
+                if (key) {
+                    updatedByKey.set(key, video)
+                }
+            }
+
+            const mergedVideos = latestVideos.map(video => {
+                const key = getVideoSyncKey(video)
+                const updatedVideo = key ? updatedByKey.get(key) : null
+                if (!updatedVideo) return video
+
+                return {
+                    ...video,
+                    complete: updatedVideo.complete,
+                    errorMessage: updatedVideo.errorMessage,
+                    status: updatedVideo.status,
+                    totalSize: updatedVideo.totalSize,
+                    speed: updatedVideo.speed,
+                    progress: updatedVideo.progress,
+                    finished_at: updatedVideo.finished_at,
+                    cid: updatedVideo.cid
+                }
+            })
+
+            emit('update:videos', mergedVideos)
         })
     }
 
     return updatedList
 })
 
-// 重新排序视频
+// Ƶ
+interface VideoDisplayGroup {
+    key: string
+    label: string
+    grouped: boolean
+    videos: any[]
+}
+
+const displayVideoGroups = computed<VideoDisplayGroup[]>(() => {
+    const videos = updatedVideos.value
+    if (!videos.length) return []
+
+    const groupsByKey = new Map<string, VideoDisplayGroup>()
+    const orderedGroupKeys: string[] = []
+    const ungrouped: any[] = []
+
+    for (const video of videos) {
+        const groupKey = String(video.group_key || '').trim()
+        const groupRole = String(video.group_role || '').trim()
+        const isGrouped = groupKey && (groupRole === '中配' || groupRole === '熟肉')
+
+        if (!isGrouped) {
+            ungrouped.push(video)
+            continue
+        }
+
+        if (!groupsByKey.has(groupKey)) {
+            groupsByKey.set(groupKey, {
+                key: `group:${groupKey}`,
+                label: groupKey,
+                grouped: true,
+                videos: []
+            })
+            orderedGroupKeys.push(groupKey)
+        }
+
+        groupsByKey.get(groupKey)!.videos.push(video)
+    }
+
+    const groups: VideoDisplayGroup[] = orderedGroupKeys
+        .map(key => groupsByKey.get(key))
+        .filter((group): group is VideoDisplayGroup => Boolean(group))
+
+    if (ungrouped.length > 0) {
+        groups.push({
+            key: 'group:ungrouped',
+            label: '未分组',
+            grouped: false,
+            videos: ungrouped
+        })
+    }
+
+    return groups
+})
+
+const getVideoGlobalIndex = (videoId: string) => {
+    return updatedVideos.value.findIndex(video => video.id === videoId)
+}
+
 const handleReorderVideo = (currentIndex: number, newIndex: number) => {
     if (currentIndex === newIndex || newIndex < 0 || newIndex >= props.videos.length) {
         return
@@ -343,7 +436,22 @@ const handleReorderVideo = (currentIndex: number, newIndex: number) => {
     emit('update:videos', newVideos)
 }
 
-// 开始编辑视频标题
+const handleReorderVideoById = (videoId: string, newIndex: number) => {
+    const currentIndex = getVideoGlobalIndex(videoId)
+    if (currentIndex < 0) return
+    handleReorderVideo(currentIndex, newIndex)
+}
+
+const reverseVideoOrder = () => {
+    if (!props.videos || props.videos.length < 2) {
+        return
+    }
+    const reversedVideos = [...props.videos].reverse()
+    emit('update:videos', reversedVideos)
+    emit('videosReversed')
+}
+
+// ʼ༭Ƶ
 const startEditVideoTitle = (id: string, currentName: string) => {
     editingFileId.value = id
     editingTitle.value = currentName
@@ -352,7 +460,7 @@ const startEditVideoTitle = (id: string, currentName: string) => {
     })
 }
 
-// 保存视频标题
+// Ƶ
 const saveVideoTitle = (id: string) => {
     if (!editingTitle.value.trim()) {
         cancelEditVideoTitle()
@@ -363,7 +471,7 @@ const saveVideoTitle = (id: string) => {
         if (video.id === id) {
             return {
                 ...video,
-                title: editingTitle.value.trim().slice(0, 80)
+                title: editingTitle.value.trim()
             }
         }
         return video
@@ -373,18 +481,18 @@ const saveVideoTitle = (id: string) => {
     cancelEditVideoTitle()
 }
 
-// 取消编辑视频标题
+// ȡ༭Ƶ
 const cancelEditVideoTitle = () => {
     editingFileId.value = null
     editingTitle.value = ''
 }
 
-// 格式化上传进度
+// ʽϴ
 const formatUploadProgress = (video: any) => {
     return Math.round(video.progress || 0)
 }
 
-// 格式化上传速度
+// ʽϴٶ
 const formatUploadSpeed = (video: any) => {
     const speed = video.speed || 0
     if (speed < 1024) {
@@ -400,7 +508,7 @@ const formatUploadSpeed = (video: any) => {
 const formatFinishedTime = (timestamp: number | string): string => {
     try {
         const date = new Date(timestamp)
-        const now = new Date(currentTime.value) // 使用响应式的当前时间
+        const now = new Date(currentTime.value)
         const diffMs = now.getTime() - date.getTime()
         const diffMins = Math.floor(diffMs / (1000 * 60))
         const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
@@ -417,7 +525,7 @@ const formatFinishedTime = (timestamp: number | string): string => {
     }
 }
 
-// 获取状态文本，与UploadQueue保持一致
+// 获取状态文本，与 UploadQueue 保持一致
 const getStatusText = (status: string) => {
     const statusMap = {
         Waiting: '待开始',
@@ -453,7 +561,7 @@ const isVideoExpiredSoon = (video: any): boolean => {
 
     try {
         const finishedDate = new Date(video.finished_at)
-        const now = new Date(currentTime.value) // 使用响应式的当前时间
+        const now = new Date(currentTime.value) // ʹӦʽĵǰʱ
         const diffHours = Math.floor((now.getTime() - finishedDate.getTime()) / (1000 * 60 * 60))
 
         return diffHours >= 8
@@ -467,7 +575,7 @@ const getVideoWarningClass = (video: any): string => {
     if (isVideoExpiredSoon(video)) {
         try {
             const finishedDate = new Date(video.finished_at)
-            const now = new Date(currentTime.value) // 使用响应式的当前时间
+            const now = new Date(currentTime.value) // ʹӦʽĵǰʱ
             const diffHours = (now.getTime() - finishedDate.getTime()) / (1000 * 60 * 60)
 
             if (diffHours >= 8) {
@@ -487,16 +595,13 @@ const getVideoWarningTooltip = (video: any): string => {
     if (isVideoExpiredSoon(video)) {
         try {
             const finishedDate = new Date(video.finished_at)
-            const now = new Date(currentTime.value) // 使用响应式的当前时间
-            const diffHours = Math.floor(
-                (now.getTime() - finishedDate.getTime()) / (1000 * 60 * 60)
-            )
+            const now = new Date(currentTime.value)
+            const diffHours = Math.floor((now.getTime() - finishedDate.getTime()) / (1000 * 60 * 60))
 
             if (diffHours >= 10) {
                 return '此视频完成超过10小时，服务器可能已删除相关文件'
-            } else {
-                return `此视频完成已${diffHours}小时，服务器将在10小时后删除相关文件`
             }
+            return `此视频完成已${diffHours}小时，服务器将在10小时后删除相关文件`
         } catch {
             return '视频完成时间较长，可能无法上传'
         }
@@ -504,20 +609,20 @@ const getVideoWarningTooltip = (video: any): string => {
     return ''
 }
 
-// 处理删除文件
+// 删除文件
 const handleRemoveFile = (id: string) => {
     emit('removeFile', id)
 }
 
-// 处理文件夹监控添加视频
+// ļмƵ
 const handleAddVideos = (newVideos: any[]) => {
-    // 发出添加视频事件到MainView，让它调用addVideoToCurrentForm处理每个视频
+    // Ƶ¼MainView，让它调用addVideoToCurrentFormÿƵ
     emit('addVideosToForm', newVideos)
 }
 
-// 处理文件夹监控提交稿件
+// ļмύ
 const handleSubmitVideos = () => {
-    // 发出提交稿件事件到MainView，让它调用submitTemplate
+    // ύ¼MainView，让它调用submitTemplate
     emit('submitTemplate')
 }
 </script>
@@ -553,6 +658,17 @@ const handleSubmitVideos = () => {
     border: 1px solid #e9ecef;
     padding: 8px;
     background: #fafbfc;
+}
+
+.uploaded-videos-list + .uploaded-videos-list {
+    margin-top: 8px;
+}
+
+.video-group-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #606266;
+    padding: 2px 4px 6px 4px;
 }
 
 .uploaded-videos-list::-webkit-scrollbar {
@@ -843,7 +959,7 @@ const handleSubmitVideos = () => {
     font-weight: 500;
 }
 
-/* 完成时间样式 */
+/* ʱʽ */
 .completed-time {
     font-size: 10px;
     color: #67c23a;
@@ -851,7 +967,7 @@ const handleSubmitVideos = () => {
     margin-left: 8px;
 }
 
-/* 警告视频样式 */
+/* Ƶʽ */
 .video-warning {
     border: 2px solid #e6a23c;
     border-radius: 6px;
@@ -895,7 +1011,7 @@ const handleSubmitVideos = () => {
     }
 }
 
-/* 超过10小时的视频使用更强烈的警告颜色 */
+/* 超过10СʱƵʹøǿҵľɫ */
 .video-warning.video-expired {
     border-color: #f56c6c;
     background: linear-gradient(to right, rgba(245, 108, 108, 0.05), rgba(245, 108, 108, 0.02));

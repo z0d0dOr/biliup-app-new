@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fs;
 use tracing::{info, warn};
 
-/// 旧版本config.yaml的结构
+/// ɰ汾config.yamlĽṹ
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LegacyUserAccount {
     pub username: String,
@@ -66,12 +66,12 @@ pub struct LegacyConfig {
     pub streamers: HashMap<String, LegacyStreamerConfig>,
 }
 
-/// 兼容性转换工具
+/// ת
 pub struct CompatibilityConverter;
 
 impl CompatibilityConverter {
-    /// 检查是否需要进入兼容模式
-    /// 如果config.json不存在但config.yaml存在，则需要兼容模式
+    /// ǷҪģʽ
+    /// 如果config.jsonڵconfig.yamlڣҪģʽ
     pub fn should_convert_old_config() -> Result<bool> {
         let json_path = get_config_json_path()?;
         let yaml_path = get_config_yaml_path()?;
@@ -79,26 +79,26 @@ impl CompatibilityConverter {
         let json_exists = json_path.exists();
         let yaml_exists = yaml_path.exists();
 
-        // 只有当JSON不存在但YAML存在时，才进入兼容模式
+        // ֻеJSONڵYAMLʱŽģʽ
         Ok(!json_exists && yaml_exists)
     }
 
-    /// 程序启动时的兼容性检查和转换
-    /// 如果需要兼容模式，自动转换YAML到JSON
+    /// ʱļԼת
+    /// ҪģʽԶתYAML到JSON
     pub async fn startup_with_compatibility() -> Result<bool> {
         if Self::should_convert_old_config()? {
-            info!("检测到旧版配置文件，开始兼容性转换...");
+            info!("⵽ɰļʼת...");
 
             let yaml_path = get_config_yaml_path()?;
             let json_path = get_config_json_path()?;
 
-            // 读取YAML文件
+            // ȡYAMLļ
             let yaml_content = fs::read_to_string(&yaml_path)?;
 
-            // 转换为JSON格式
+            // תΪJSONʽ
             let json_content = Self::convert_yaml_to_json(&yaml_content).await?;
 
-            // 写入JSON文件
+            // дJSONļ
             fs::write(&json_path, &json_content)?;
             Ok(true)
         } else {
@@ -106,24 +106,24 @@ impl CompatibilityConverter {
         }
     }
 
-    /// 从旧版config.yaml转换到新版config.json格式
+    /// Ӿɰconfig.yamlת°config.jsonʽ
     pub async fn convert_yaml_to_json(yaml_content: &str) -> Result<String> {
-        // 解析旧版YAML
+        // ɰYAML
         let legacy_config: LegacyConfig = serde_yaml::from_str(yaml_content)?;
 
-        // 转换为新版格式
+        // תΪ°ʽ
         let user_config = Self::convert_legacy_to_user_config(legacy_config).await?;
 
-        // 序列化为JSON
+        // лΪJSON
         let json_content = serde_json::to_string_pretty(&user_config)?;
         Ok(json_content)
     }
 
-    /// 将旧版配置转换为UserConfig格式
+    /// ɰתΪUserConfigʽ
     async fn convert_legacy_to_user_config(legacy: LegacyConfig) -> Result<ConfigRoot> {
         let mut template = HashMap::new();
 
-        // 转换每个streamer为template
+        // תÿstreamerΪtemplate
         for (streamer_name, streamer_config) in legacy.streamers {
             let template_config = TemplateConfig {
                 copyright: streamer_config.copyright,
@@ -131,6 +131,7 @@ impl CompatibilityConverter {
                 tid: streamer_config.tid,
                 cover: streamer_config.cover,
                 title: streamer_config.title,
+                title_prefix: String::new(),
                 desc: streamer_config.desc,
                 desc_v2: streamer_config.desc_v2,
                 dynamic: streamer_config.dynamic,
@@ -141,14 +142,16 @@ impl CompatibilityConverter {
                     for v in streamer_config.videos {
                         vids.push(VideoInfo {
                             title: v.title,
-                            id: v.filename.clone(), // 旧配置的id和filename相同
+                            id: v.filename.clone(), // õid和filenameͬ
                             cid: 0,
                             filename: v.filename,
                             desc: v.desc,
-                            path: String::new(), // 旧版配置没有path字段，留空
-                            finished_at: 0,      // 旧版配置没有finished_at字段，默认0
-                            encoding_status: 0,  // 旧版配置没有encoding_status字段，默认0
-                            status_desc: String::new(), // 旧版配置没有status_desc字段，留空
+                            path: String::new(), // ɰûpathֶΣ
+                            finished_at: 0,      // ɰûfinished_atֶΣĬ0
+                            encoding_status: 0,  // ɰûencoding_statusֶΣĬ0
+                            status_desc: String::new(), // ɰûstatus_descֶΣ
+                            group_key: String::new(), // ɰûзֶ
+                            group_role: String::new(), // ɰûзֶ
                         });
                     }
                     vids
@@ -157,10 +160,10 @@ impl CompatibilityConverter {
                 open_subtitle: streamer_config.open_subtitle,
                 interactive: streamer_config.interactive,
                 mission_id: streamer_config.mission_id,
-                topic_id: None,   // 旧版配置没有topic_id
-                season_id: None,  // 旧版配置没有season_id
-                section_id: None, // 旧版配置没有section_id
-                is_only_self: 0,  // 旧版配置没有is_only_self
+                topic_id: None,   // ɰûtopic_id
+                season_id: None,  // ɰûseason_id
+                section_id: None, // ɰûsection_id
+                is_only_self: 0,  // ɰûis_only_self
                 dolby: streamer_config.dolby,
                 lossless_music: streamer_config.lossless_music,
                 no_reprint: streamer_config.no_reprint,
@@ -174,18 +177,18 @@ impl CompatibilityConverter {
                 up_close_reply: if streamer_config.up_close_reply { 1 } else { 0 },
                 up_close_danmu: if streamer_config.up_close_danmu { 1 } else { 0 },
                 atomic_int: streamer_config.atomic_int,
-                watermark: 0, // 默认关闭
+                watermark: 0, // ĬϹر
             };
 
             template.insert(streamer_name, template_config);
         }
 
-        // 读取cookie
+        // ȡcookie
         let cookie_path = get_old_cookie_file_path()?;
         let (bilibili, user) = validate_cookie_in_old_config(&cookie_path)
             .await
             .map_err(|e| {
-                warn!("Cookie验证失败: {}", e);
+                warn!("Cookie֤ʧ: {}", e);
                 e
             })?;
 
@@ -195,7 +198,7 @@ impl CompatibilityConverter {
                 name: user.username,
                 cookie: bilibili.login_info,
             },
-            proxy: None, // 旧版配置没有代理设置
+            proxy: None, // ɰûд
             line: legacy.line,
             limit: legacy.limit,
             watermark: 0,

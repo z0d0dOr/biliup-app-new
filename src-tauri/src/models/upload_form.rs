@@ -103,6 +103,12 @@ impl TemplateConfig {
     }
 
     pub fn into_bilibili_form(self) -> BilibiliForm {
+        let merged_title = if self.title_prefix.trim().is_empty() {
+            self.title.clone()
+        } else {
+            format!("{}{}", self.title_prefix, self.title)
+        };
+
         let extra_fields = {
             let mut map = std::collections::HashMap::new();
 
@@ -137,7 +143,7 @@ impl TemplateConfig {
             source: self.source,
             tid: self.tid as u16,
             cover: self.cover.replace("https:", ""),
-            title: self.title,
+            title: merged_title,
             desc_format_id: 0, // 默认值
             desc: self.desc,
             desc_v2: None,

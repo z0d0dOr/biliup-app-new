@@ -39,12 +39,16 @@ pub struct VideoInfo {
     pub encoding_status: i64,
     #[serde(default)]
     pub status_desc: String,
+    #[serde(default)]
+    pub group_key: String,
+    #[serde(default)]
+    pub group_role: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemplateConfig {
     #[serde(default)]
-    pub copyright: u8, // 1: 自制, 2: 转载
+    pub copyright: u8, // 1: 自制, 2: ת
     #[serde(default)]
     pub source: String,
     #[serde(default)]
@@ -54,19 +58,21 @@ pub struct TemplateConfig {
     #[serde(default)]
     pub title: String,
     #[serde(default)]
+    pub title_prefix: String,
+    #[serde(default)]
     pub desc: String,
     #[serde(default)]
     pub desc_v2: Option<String>,
     #[serde(default)]
-    pub dynamic: String, // 粉丝动态
+    pub dynamic: String, // ˿̬
     #[serde(default)]
     pub subtitle: Subtitle,
     #[serde(default)]
-    pub tag: String, // 逗号分隔的标签
+    pub tag: String, // ŷָıǩ
     #[serde(default)]
     pub videos: Vec<VideoInfo>,
     #[serde(default)]
-    pub dtime: Option<u32>, // 定时发布时间
+    pub dtime: Option<u32>, // ʱʱ
     #[serde(default)]
     pub open_subtitle: bool,
     #[serde(default)]
@@ -117,7 +123,7 @@ pub struct UserConfig {
     #[serde(default)]
     pub auto_edit: u8,
     #[serde(default)]
-    pub templates: HashMap<String, TemplateConfig>, // 匹配config.json中的"templates"字段
+    pub templates: HashMap<String, TemplateConfig>, // ƥconfig.jsonе"templates"ֶ
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,11 +137,25 @@ pub struct ConfigRoot {
     #[serde(default = "default_log_level")]
     pub log_level: String,
     #[serde(default)]
+    pub translation_api_url: String,
+    #[serde(default)]
+    pub translation_api_key: String,
+    #[serde(default)]
+    pub translation_model: String,
+    #[serde(default = "default_translation_prompt")]
+    pub translation_prompt: String,
+    #[serde(default)]
+    pub translation_auto: bool,
+    #[serde(default)]
     pub config: HashMap<u64, UserConfig>,
 }
 
 fn default_log_level() -> String {
     "info".to_string()
+}
+
+fn default_translation_prompt() -> String {
+    "You are a professional video title translator. Translate the input title into concise, natural Simplified Chinese. Keep product names, proper nouns, and abbreviations accurate. Output only the translated title without explanation or quotes.".to_string()
 }
 
 impl ConfigRoot {
@@ -145,7 +165,7 @@ impl ConfigRoot {
     }
 
     pub fn save_to_file(&self, path: &PathBuf) -> Result<()> {
-        // 确保父目录存在
+        // ȷĿ¼
         if let Some(parent) = path.parent()
             && !parent.exists()
         {
@@ -194,7 +214,7 @@ impl ConfigRoot {
         if self.config.remove(&uid).is_some() {
             Ok(self)
         } else {
-            Err(anyhow::anyhow!("用户配置不存在"))
+            Err(anyhow::anyhow!("ûò"))
         }
     }
 
@@ -209,7 +229,7 @@ impl ConfigRoot {
     ) -> Result<&Self> {
         if let Some(user_config) = self.config.get_mut(&uid) {
             info!(
-                "UID {} 用户配置更新: line={:?}, proxy={:?}, limit={}, watermark={}, auto_edit={}",
+                "UID {} ûø: line={:?}, proxy={:?}, limit={}, watermark={}, auto_edit={}",
                 uid, line, proxy, limit, watermark, auto_edit
             );
             user_config.line = line;
@@ -219,7 +239,7 @@ impl ConfigRoot {
             user_config.auto_edit = auto_edit;
             Ok(self)
         } else {
-            Err(anyhow::anyhow!("用户配置不存在"))
+            Err(anyhow::anyhow!("ûò"))
         }
     }
 
@@ -229,15 +249,29 @@ impl ConfigRoot {
         auto_start: bool,
         auto_upload: bool,
         log_level: String,
+        translation_api_url: String,
+        translation_api_key: String,
+        translation_model: String,
+        translation_prompt: String,
+        translation_auto: bool,
     ) -> &Self {
         info!(
-            "更新全局配置: max_curr={}, auto_start={}, auto_upload={}, log_level={}",
+            "ȫ: max_curr={}, auto_start={}, auto_upload={}, log_level={}",
             max_curr, auto_start, auto_upload, log_level
         );
         self.max_curr = max_curr;
         self.auto_start = auto_start;
         self.auto_upload = auto_upload;
         self.log_level = log_level;
+        self.translation_api_url = translation_api_url;
+        self.translation_api_key = translation_api_key;
+        self.translation_model = translation_model;
+        self.translation_prompt = if translation_prompt.trim().is_empty() {
+            default_translation_prompt()
+        } else {
+            translation_prompt
+        };
+        self.translation_auto = translation_auto;
 
         self
     }
@@ -279,6 +313,11 @@ impl ConfigRoot {
             auto_start: true,
             auto_upload: true,
             log_level: default_log_level(),
+            translation_api_url: String::new(),
+            translation_api_key: String::new(),
+            translation_model: String::new(),
+            translation_prompt: default_translation_prompt(),
+            translation_auto: false,
             config: HashMap::new(),
         }
     }
@@ -304,16 +343,16 @@ impl ConfigRoot {
         }
 
         fn compare_video_info_vec(old: &Vec<VideoInfo>, new: &Vec<VideoInfo>) {
-            // 打印新增的 VideoInfo
+            // ӡ VideoInfo
             for new_video in new {
                 if !old.contains(new_video) {
-                    debug!("添加视频信息: {:?}", new_video);
+                    debug!("ƵϢ: {:?}", new_video);
                 }
             }
-            // 打印被删除的 VideoInfo
+            // ӡɾ VideoInfo
             for old_video in old {
                 if !new.contains(old_video) {
-                    debug!("删除视频信息: {:?}", old_video);
+                    debug!("ɾƵϢ: {:?}", old_video);
                 }
             }
         }
@@ -324,6 +363,7 @@ impl ConfigRoot {
             compare_field!(tid, old, new);
             compare_field!(cover, old, new);
             compare_field!(title, old, new);
+            compare_field!(title_prefix, old, new);
             compare_field!(desc, old, new);
             compare_field!(desc_v2, old, new);
             compare_field!(dynamic, old, new);
@@ -352,11 +392,12 @@ impl ConfigRoot {
 impl Default for TemplateConfig {
     fn default() -> Self {
         Self {
-            copyright: 1, // 默认自制
+            copyright: 1, // Ĭ
             source: String::new(),
             tid: 0,
             cover: String::new(),
             title: String::new(),
+            title_prefix: String::new(),
             desc: String::new(),
             desc_v2: None,
             dynamic: String::new(),
