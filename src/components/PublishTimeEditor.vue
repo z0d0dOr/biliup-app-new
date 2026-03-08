@@ -2,6 +2,8 @@
   <div class="publish-time-editor">
     <section
       class="publish-time-editor-panel publish-time-editor-panel--left-drop"
+      :class="{ 'publish-time-drop-active': isLeftDropTargetActive }"
+      data-drop-target="left"
       @dragenter.prevent.stop="allowDrop"
       @dragover.prevent.stop="allowDrop"
       @drop.prevent.stop="handleDropToLeft"
@@ -26,7 +28,10 @@
           v-for="seasonRow in seasonRows"
           :key="`season-${seasonRow.key}`"
           class="publish-date-row"
-          :class="{ 'publish-date-row--cancelled': seasonRow.hasUnscheduled }"
+          :class="{
+            'publish-date-row--cancelled': seasonRow.hasUnscheduled,
+            'publish-time-drop-active': isLeftDropTargetActive
+          }"
           @dragenter.prevent.stop="allowDrop"
           @dragover.prevent.stop="allowDrop"
           @drop.prevent.stop="handleDropToLeft"
@@ -60,11 +65,14 @@
               class="publish-time-video-card"
               :class="{
                 'publish-time-video-card--cancelled': task.isUnscheduled,
-                'publish-time-video-card--dragging': draggingCardId === task.id
+                'publish-time-video-card--selected': isCardSelected(task.id),
+                'publish-time-video-card--dragging': isCardDragging(task.id)
               }"
-              draggable="true"
-              @dragstart.stop="handleCardDragStart($event, task.id)"
-              @dragend.stop="handleCardDragEnd"
+              draggable="false"
+              @dragenter.prevent.stop="allowDrop"
+              @dragover.prevent.stop="allowDrop"
+              @drop.prevent.stop="handleDropToLeft"
+              @mousedown.left.stop="handleCardPointerDown($event, task.id)"
             >
               <div class="publish-time-video-card-title-row">
                 <div class="publish-time-video-card-title">{{ task.videoTitle }}</div>
@@ -114,6 +122,9 @@
           v-for="dateRow in dateRows"
           :key="dateRow.key"
           class="publish-date-row"
+          :class="{ 'publish-time-drop-active': isDateDropTargetActive(dateRow.key) }"
+          :data-date-key="dateRow.key"
+          data-drop-target="date"
           @dragenter.prevent.stop="allowDrop"
           @dragover.prevent.stop="allowDrop"
           @drop.prevent.stop="handleDropToDateGroup($event, dateRow.key)"
@@ -139,18 +150,31 @@
               </el-icon>
             </div>
           </div>
-          <div v-if="dateRow.tasks.length > 0 && !isDateGroupCollapsed(dateRow.key)" class="publish-date-row-cards">
+          <div
+            v-if="dateRow.tasks.length > 0 && !isDateGroupCollapsed(dateRow.key)"
+            class="publish-date-row-cards"
+            :data-date-key="dateRow.key"
+            data-drop-target="date"
+            @dragenter.prevent.stop="allowDrop"
+            @dragover.prevent.stop="allowDrop"
+            @drop.prevent.stop="handleDropToDateGroup($event, dateRow.key)"
+          >
             <div
               v-for="task in dateRow.tasks"
               :key="`date-${dateRow.key}-${task.id}`"
               class="publish-time-video-card publish-time-video-card--compact"
               :class="{
                 'publish-time-video-card--changed': task.isChanged && !!task.scheduleDateKey,
-                'publish-time-video-card--dragging': draggingCardId === task.id
+                'publish-time-video-card--selected': isCardSelected(task.id),
+                'publish-time-video-card--dragging': isCardDragging(task.id)
               }"
-              draggable="true"
-              @dragstart.stop="handleCardDragStart($event, task.id)"
-              @dragend.stop="handleCardDragEnd"
+              :data-date-key="dateRow.key"
+              data-drop-target="date"
+              draggable="false"
+              @dragenter.prevent.stop="allowDrop"
+              @dragover.prevent.stop="allowDrop"
+              @drop.prevent.stop="handleDropToDateGroup($event, dateRow.key)"
+              @mousedown.left.stop="handleCardPointerDown($event, task.id)"
             >
               <div class="publish-time-video-card-title-row">
                 <div class="publish-time-video-card-title">{{ task.videoTitle }}</div>
@@ -179,11 +203,21 @@
         </el-button>
       </div>
     </section>
+    <div
+      v-if="customCardDrag.active"
+      class="publish-time-drag-ghost"
+      :style="{
+        left: `${customCardDrag.x}px`,
+        top: `${customCardDrag.y}px`
+      }"
+    >
+      {{ customCardDrag.label }}
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ArrowDown } from '@element-plus/icons-vue'
 import { useUtilsStore } from '../stores/utils'
 import { useUploadStore } from '../stores/upload'
@@ -226,11 +260,28 @@ const workingCards = ref<PublishTimeCard[]>([])
 const seasonGroupCollapsed = ref<Record<string, boolean>>({})
 const dateGroupCollapsed = ref<Record<string, boolean>>({})
 const draggingCardId = ref('')
+const draggingCardIds = ref<string[]>([])
 const draggingSeasonKey = ref('')
+const selectedCardIds = ref<string[]>([])
+const selectionAnchorCardId = ref('')
 const globalTimeRange = ref(DEFAULT_PUBLISH_TIME_RANGE)
 const submitIntervalSeconds = ref(1)
+const customCardDrag = ref({
+  active: false,
+  x: 0,
+  y: 0,
+  label: ''
+})
+const customCardDropTarget = ref<{ type: 'left' } | { type: 'date'; dateKey: string } | null>(null)
 let loadToken = 0
 let orderSeed = 1
+let pendingCardDrag:
+  | {
+      startX: number
+      startY: number
+      payload: { type: 'card'; id: string } | { type: 'cards'; ids: string[] }
+    }
+  | null = null
 
 const formatTwoDigits = (value: number) => String(value).padStart(2, '0')
 const formatDateKey = (date: Date) =>
@@ -389,6 +440,82 @@ const toggleDateGroup = (key: string) => {
   dateGroupCollapsed.value[key] = !dateGroupCollapsed.value[key]
 }
 
+const getOrderedCardIds = () => runningCards.value.map(card => card.id)
+
+const setSelectedCardIds = (ids: string[]) => {
+  const validIds = new Set(getOrderedCardIds())
+  const uniqueIds: string[] = []
+  for (const id of ids) {
+    if (!id || !validIds.has(id) || uniqueIds.includes(id)) continue
+    uniqueIds.push(id)
+  }
+  selectedCardIds.value = uniqueIds
+}
+
+const isCardSelected = (cardId: string) => selectedCardIds.value.includes(cardId)
+const isCardDragging = (cardId: string) => draggingCardIds.value.includes(cardId)
+const isLeftDropTargetActive = computed(
+  () => customCardDrag.value.active && customCardDropTarget.value?.type === 'left'
+)
+const isDateDropTargetActive = (dateKey: string) =>
+  customCardDrag.value.active &&
+  customCardDropTarget.value?.type === 'date' &&
+  customCardDropTarget.value.dateKey === dateKey
+
+const handleCardMouseDown = (event: MouseEvent, cardId: string) => {
+  if (event.button !== 0) return
+
+  const orderedIds = getOrderedCardIds()
+  if (!orderedIds.includes(cardId)) return
+
+  const toggleKey = event.ctrlKey || event.metaKey
+
+  if (event.shiftKey) {
+    const anchorId =
+      (selectionAnchorCardId.value && orderedIds.includes(selectionAnchorCardId.value)
+        ? selectionAnchorCardId.value
+        : selectedCardIds.value.find(id => orderedIds.includes(id))) || cardId
+    const anchorIndex = orderedIds.indexOf(anchorId)
+    const targetIndex = orderedIds.indexOf(cardId)
+    const [start, end] = anchorIndex <= targetIndex ? [anchorIndex, targetIndex] : [targetIndex, anchorIndex]
+    const rangeIds = orderedIds.slice(start, end + 1)
+    setSelectedCardIds(toggleKey ? [...selectedCardIds.value, ...rangeIds] : rangeIds)
+    return
+  }
+
+  if (toggleKey) {
+    const wasSelected = isCardSelected(cardId)
+    if (isCardSelected(cardId)) {
+      selectedCardIds.value = selectedCardIds.value.filter(id => id !== cardId)
+    } else {
+      selectedCardIds.value = [...selectedCardIds.value, cardId]
+    }
+    if (!wasSelected) selectionAnchorCardId.value = cardId
+    return
+  }
+
+  if (selectedCardIds.value.length > 1 && isCardSelected(cardId)) {
+    selectionAnchorCardId.value = cardId
+    return
+  }
+
+  setSelectedCardIds([cardId])
+  selectionAnchorCardId.value = cardId
+}
+
+const getCardDragPayload = (
+  cardId: string
+): { type: 'card'; id: string } | { type: 'cards'; ids: string[] } => {
+  const selectedIds = isCardSelected(cardId) ? selectedCardIds.value.slice() : [cardId]
+  return selectedIds.length > 1 ? { type: 'cards', ids: selectedIds } : { type: 'card', id: cardId }
+}
+
+const getCardDragLabel = (payload: { type: 'card'; id: string } | { type: 'cards'; ids: string[] }) => {
+  if (payload.type === 'cards') return `移动 ${payload.ids.length} 个视频`
+  const card = runningCards.value.find(item => item.id === payload.id)
+  return card?.videoTitle || '移动视频'
+}
+
 const setGlobalTimeRange = (value: string | null | undefined) => {
   globalTimeRange.value = String(value || '').trim()
 }
@@ -463,6 +590,14 @@ const clearCardSchedule = (cardId: string) => {
   card.orderIndex = ++orderSeed
 }
 
+const assignCardsToDate = (cardIds: string[], dateKey: string) => {
+  for (const cardId of cardIds) assignCardToDate(cardId, dateKey)
+}
+
+const clearCardsSchedule = (cardIds: string[]) => {
+  for (const cardId of cardIds) clearCardSchedule(cardId)
+}
+
 const assignSeasonToDate = (seasonKey: string, dateKey: string) => {
   if (!seasonKey || !dateKey) return
   const latest = getLatestSchedulable()
@@ -499,6 +634,111 @@ const clearDateGroup = (dateKey: string) => {
   }
 }
 
+const applyCardPayload = (
+  payload: { type: 'card'; id: string } | { type: 'cards'; ids: string[] },
+  target: { type: 'left' } | { type: 'date'; dateKey: string } | null
+) => {
+  if (!target) return
+  if (target.type === 'left') {
+    if (payload.type === 'cards') {
+      clearCardsSchedule(payload.ids)
+      return
+    }
+    clearCardSchedule(payload.id)
+    return
+  }
+
+  if (payload.type === 'cards') {
+    assignCardsToDate(payload.ids, target.dateKey)
+    return
+  }
+  assignCardToDate(payload.id, target.dateKey)
+}
+
+const resolveCustomDropTarget = (clientX: number, clientY: number) => {
+  const element = document.elementFromPoint(clientX, clientY) as HTMLElement | null
+  const dropTargetElement = element?.closest?.('[data-drop-target]') as HTMLElement | null
+  if (!dropTargetElement) return null
+  const targetType = String(dropTargetElement.dataset.dropTarget || '')
+  if (targetType === 'left') return { type: 'left' } as const
+  if (targetType === 'date') {
+    const dateKey = String(dropTargetElement.dataset.dateKey || '')
+    if (dateKey) return { type: 'date', dateKey } as const
+  }
+  return null
+}
+
+const resetCustomCardDrag = () => {
+  pendingCardDrag = null
+  customCardDrag.value = {
+    active: false,
+    x: 0,
+    y: 0,
+    label: ''
+  }
+  customCardDropTarget.value = null
+  draggingCardIds.value = []
+  draggingCardId.value = ''
+  document.body.style.cursor = ''
+}
+
+const handleGlobalPointerMove = (event: MouseEvent) => {
+  if (!pendingCardDrag) return
+
+  const offsetX = event.clientX - pendingCardDrag.startX
+  const offsetY = event.clientY - pendingCardDrag.startY
+  const distance = Math.hypot(offsetX, offsetY)
+
+  if (!customCardDrag.value.active && distance < 6) {
+    return
+  }
+
+  if (!customCardDrag.value.active) {
+    customCardDrag.value = {
+      active: true,
+      x: event.clientX + 14,
+      y: event.clientY + 14,
+      label: getCardDragLabel(pendingCardDrag.payload)
+    }
+    draggingCardIds.value =
+      pendingCardDrag.payload.type === 'cards'
+        ? pendingCardDrag.payload.ids.slice()
+        : [pendingCardDrag.payload.id]
+    draggingCardId.value = pendingCardDrag.payload.type === 'card' ? pendingCardDrag.payload.id : ''
+    draggingSeasonKey.value = ''
+    document.body.style.cursor = 'grabbing'
+  } else {
+    customCardDrag.value = {
+      ...customCardDrag.value,
+      x: event.clientX + 14,
+      y: event.clientY + 14
+    }
+  }
+
+  customCardDropTarget.value = resolveCustomDropTarget(event.clientX, event.clientY)
+  event.preventDefault()
+}
+
+const handleGlobalPointerUp = (event: MouseEvent) => {
+  if (!pendingCardDrag) return
+  const activePayload = pendingCardDrag.payload
+  const hadActiveDrag = customCardDrag.value.active
+  const target = hadActiveDrag ? resolveCustomDropTarget(event.clientX, event.clientY) : null
+  resetCustomCardDrag()
+  if (!hadActiveDrag) return
+  applyCardPayload(activePayload, target)
+}
+
+const handleCardPointerDown = (event: MouseEvent, cardId: string) => {
+  if (event.button !== 0) return
+  handleCardMouseDown(event, cardId)
+  pendingCardDrag = {
+    startX: event.clientX,
+    startY: event.clientY,
+    payload: getCardDragPayload(cardId)
+  }
+}
+
 const setTransparentDragImage = (event: DragEvent) => {
   if (!event.dataTransfer) return
   const canvas = document.createElement('canvas')
@@ -507,42 +747,51 @@ const setTransparentDragImage = (event: DragEvent) => {
   event.dataTransfer.setDragImage(canvas, 0, 0)
 }
 
-const handleCardDragStart = (event: DragEvent, cardId: string) => {
-  draggingCardId.value = cardId
-  draggingSeasonKey.value = ''
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', `card:${cardId}`)
-  }
-  setTransparentDragImage(event)
-}
-
-const handleCardDragEnd = () => {
-  draggingCardId.value = ''
-  draggingSeasonKey.value = ''
+const setDragTransferData = (dataTransfer: DataTransfer, payload: string) => {
+  dataTransfer.effectAllowed = 'move'
+  dataTransfer.dropEffect = 'move'
+  dataTransfer.setData('application/x-biliup-publish-time-drag', payload)
+  dataTransfer.setData('text/plain', payload)
 }
 
 const handleSeasonDragStart = (event: DragEvent, seasonKey: string) => {
-  draggingSeasonKey.value = seasonKey
-  draggingCardId.value = ''
   if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', `season:${seasonKey}`)
+    setDragTransferData(event.dataTransfer, `season:${seasonKey}`)
   }
   setTransparentDragImage(event)
+  requestAnimationFrame(() => {
+    draggingSeasonKey.value = seasonKey
+    draggingCardId.value = ''
+    draggingCardIds.value = []
+  })
 }
 
 const handleSeasonDragEnd = () => {
   draggingSeasonKey.value = ''
+  draggingCardIds.value = []
 }
 
 const getDragPayload = (
   event: DragEvent
-): { type: 'card'; id: string } | { type: 'season'; key: string } | null => {
+): { type: 'card'; id: string } | { type: 'cards'; ids: string[] } | { type: 'season'; key: string } | null => {
+  if (draggingCardIds.value.length > 1) return { type: 'cards', ids: draggingCardIds.value.slice() }
   if (draggingCardId.value) return { type: 'card', id: draggingCardId.value }
   if (draggingSeasonKey.value) return { type: 'season', key: draggingSeasonKey.value }
-  const raw = event.dataTransfer?.getData('text/plain') || ''
+  const raw =
+    event.dataTransfer?.getData('application/x-biliup-publish-time-drag') ||
+    event.dataTransfer?.getData('text/plain') ||
+    ''
   if (!raw) return null
+  if (raw.startsWith('cards:')) {
+    try {
+      const ids = JSON.parse(raw.slice(6))
+      if (Array.isArray(ids) && ids.length > 0) {
+        return { type: 'cards', ids: ids.map(id => String(id)).filter(Boolean) }
+      }
+    } catch {
+      return null
+    }
+  }
   if (raw.startsWith('card:')) return { type: 'card', id: raw.slice(5) }
   if (raw.startsWith('season:')) return { type: 'season', key: raw.slice(7) }
   return { type: 'card', id: raw }
@@ -557,6 +806,10 @@ const handleDropToDateGroup = (event: DragEvent, dateKey: string) => {
   allowDrop(event)
   const payload = getDragPayload(event)
   if (!payload) return
+  if (payload.type === 'cards') {
+    assignCardsToDate(payload.ids, dateKey)
+    return
+  }
   if (payload.type === 'card') {
     assignCardToDate(payload.id, dateKey)
     return
@@ -568,6 +821,10 @@ const handleDropToLeft = (event: DragEvent) => {
   allowDrop(event)
   const payload = getDragPayload(event)
   if (!payload) return
+  if (payload.type === 'cards') {
+    clearCardsSchedule(payload.ids)
+    return
+  }
   if (payload.type === 'card') {
     clearCardSchedule(payload.id)
     return
@@ -581,6 +838,11 @@ const loadVideos = async () => {
   if (!uid) {
     seasonCount.value = 0
     workingCards.value = []
+    selectedCardIds.value = []
+    selectionAnchorCardId.value = ''
+    draggingCardIds.value = []
+    draggingCardId.value = ''
+    draggingSeasonKey.value = ''
     return
   }
   loading.value = true
@@ -590,10 +852,16 @@ const loadVideos = async () => {
     const videos = Array.isArray((result as any)?.videos) ? (result as any).videos : []
     seasonCount.value = Number((result as any)?.season_count || 0)
     rebuildWorkingCards(videos)
+    setSelectedCardIds(selectedCardIds.value)
   } catch (error) {
     if (token !== loadToken) return
     seasonCount.value = 0
     workingCards.value = []
+    selectedCardIds.value = []
+    selectionAnchorCardId.value = ''
+    draggingCardIds.value = []
+    draggingCardId.value = ''
+    draggingSeasonKey.value = ''
     console.error('加载修改发布时间视频列表失败:', error)
     utilsStore.showMessage(`加载修改发布时间视频列表失败: ${error}`, 'error')
   } finally {
@@ -670,7 +938,15 @@ watch(
 )
 
 onMounted(() => {
+  window.addEventListener('mousemove', handleGlobalPointerMove)
+  window.addEventListener('mouseup', handleGlobalPointerUp)
   if (props.selectedUser?.uid) void loadVideos()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('mousemove', handleGlobalPointerMove)
+  window.removeEventListener('mouseup', handleGlobalPointerUp)
+  resetCustomCardDrag()
 })
 </script>
 
@@ -747,6 +1023,7 @@ onMounted(() => {
   border-radius: 8px;
   overflow: hidden;
   background: #fff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .publish-date-row--cancelled {
@@ -880,6 +1157,32 @@ onMounted(() => {
 .publish-time-video-card--changed {
   border-color: #95d475;
   background: linear-gradient(180deg, #f3fff4 0%, #eafbe9 100%);
+}
+
+.publish-time-video-card--selected {
+  border-color: #409eff;
+  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.16);
+}
+
+.publish-time-drop-active {
+  border-color: #409eff !important;
+  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.14);
+}
+
+.publish-time-drag-ghost {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  max-width: 240px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(64, 158, 255, 0.92);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  box-shadow: 0 10px 24px rgba(64, 158, 255, 0.25);
+  transform: translate3d(0, 0, 0);
 }
 
 .publish-time-video-card-title-row {

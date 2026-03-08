@@ -373,6 +373,22 @@ interface VideoDisplayGroup {
     videos: any[]
 }
 
+const getGroupedRolePriority = (role: string) => {
+    if (role === '中配') return 0
+    if (role === '熟肉') return 1
+    return 2
+}
+
+const sortVideosInGroupByRole = (videos: any[]) =>
+    videos
+        .map((video, index) => ({
+            video,
+            index,
+            priority: getGroupedRolePriority(String(video?.group_role || '').trim())
+        }))
+        .sort((a, b) => a.priority - b.priority || a.index - b.index)
+        .map(item => item.video)
+
 const displayVideoGroups = computed<VideoDisplayGroup[]>(() => {
     const videos = updatedVideos.value
     if (!videos.length) return []
@@ -407,6 +423,10 @@ const displayVideoGroups = computed<VideoDisplayGroup[]>(() => {
     const groups: VideoDisplayGroup[] = orderedGroupKeys
         .map(key => groupsByKey.get(key))
         .filter((group): group is VideoDisplayGroup => Boolean(group))
+        .map(group => ({
+            ...group,
+            videos: sortVideosInGroupByRole(group.videos)
+        }))
 
     if (ungrouped.length > 0) {
         groups.push({

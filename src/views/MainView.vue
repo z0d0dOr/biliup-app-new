@@ -1,7 +1,7 @@
 <template>
     <div class="main-view">
         <!-- 拖拽覆盖层 -->
-        <div v-if="isDragOver" class="drag-overlay">
+        <div v-if="isUploadMode && isDragOver" class="drag-overlay">
             <div class="drag-content">
                 <el-icon class="drag-icon"><upload-filled /></el-icon>
                 <h3>拖拽视频文件到此处</h3>
@@ -1077,6 +1077,8 @@ import { open, save } from '@tauri-apps/plugin-dialog'
 import { copyFile, remove } from '@tauri-apps/plugin-fs'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { listen } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
 import LoginView from '../components/LoginView.vue'
 import UserConfig from '../components/UserConfig.vue'
 import TopicView from '../components/TopicView.vue'
@@ -1583,8 +1585,12 @@ const forwardConsole = (fnName: keyof Console, logger: (level: string, ...args: 
 
 onMounted(async () => {
     await initializeData()
-    await setupDragAndDrop()
-    dragAndDropCleanup = setupDomFileDragDrop()
+    const tauriDragDropCleanup = await setupDragAndDrop()
+    const domDragDropCleanup = setupDomFileDragDrop()
+    dragAndDropCleanup = () => {
+        tauriDragDropCleanup?.()
+        domDragDropCleanup?.()
+    }
     keyboardCleanup = await setupKeyboardShortcuts()
 
     forwardConsole('log', utilsStore.log)
@@ -1751,39 +1757,126 @@ const hasUnsavedChanges = (
 
 // ק
 const setupDragAndDrop = async () => {
-    try {
-        // ļק¼
-        await listen('tauri://drag-drop', async event => {
-            const videos = event.payload as string[]
-            isDragOver.value = false
-            if (templateLoading.value) {
-                utilsStore.showMessage('模板加载中，请稍后再试', 'warning')
-                return
+    const unlistenFns: Array<() => void> = []
+
+    const cleanup = () => {
+        for (const unlisten of unlistenFns.splice(0)) {
+            try {
+                unlisten()
+            } catch (error) {
+                console.warn('drag-drop listener cleanup failed:', error)
             }
-            await handleDroppedFiles(videos)
-        })
-
-        // 监听拖拽悬停事件
-        await listen('tauri://drag-over', event => {
-            if (!isDragOver.value) console.log('文件拖拽悬停:', event.payload, '，忽略后续日志')
-            isDragOver.value = true
-        })
-
-        // קȡ¼
-        await listen('tauri://drag-leave', () => {
-            console.log('文件拖拽离开')
-            isDragOver.value = false
-        })
-    } catch (error) {
-        console.error('设置拖拽监听失败: ', error)
-        utilsStore.showMessage(`设置拖拽监听失败: ${error}`, 'error')
+        }
+        isDragOver.value = false
     }
+
+    const handleDropPayload = async (payload: any) => {
+        isDragOver.value = false
+        if (!isUploadMode.value) {
+            return
+        }
+        if (templateLoading.value) {
+            utilsStore.showMessage('Template is loading, please try again later', 'warning')
+            return
+        }
+        await handleDroppedFiles(payload)
+    }
+
+    try {
+        const bindNativeDragDrop = async (target: any) => {
+            const onDragDropEvent = target?.onDragDropEvent
+            if (typeof onDragDropEvent !== 'function') return false
+
+            const unlisten = await onDragDropEvent.call(target, async (event: any) => {
+                const payloadType = String(event?.payload?.type || event?.type || '').toLowerCase()
+                const eventName = String(event?.event || '').toLowerCase()
+
+                if (payloadType === 'drop' || eventName.includes('drag-drop')) {
+                    const payload = event?.payload?.paths ?? event?.paths ?? event?.payload ?? event
+                    await handleDropPayload(payload)
+                    return
+                }
+
+                if (
+                    payloadType === 'enter' ||
+                    payloadType === 'over' ||
+                    eventName.includes('drag-over')
+                ) {
+                    if (!isUploadMode.value) {
+                        isDragOver.value = false
+                        return
+                    }
+                    isDragOver.value = true
+                    return
+                }
+
+                if (
+                    payloadType === 'leave' ||
+                    payloadType === 'cancel' ||
+                    eventName.includes('drag-leave')
+                ) {
+                    isDragOver.value = false
+                }
+            })
+
+            if (typeof unlisten === 'function') {
+                unlistenFns.push(unlisten)
+                return true
+            }
+            return false
+        }
+
+        if (await bindNativeDragDrop(getCurrentWebview())) {
+            return cleanup
+        }
+
+        if (await bindNativeDragDrop(getCurrentWindow())) {
+            return cleanup
+        }
+    } catch (error) {
+        console.warn('Tauri v2 drag-drop listener unavailable, fallback to legacy events:', error)
+    }
+
+    try {
+        unlistenFns.push(
+            await listen('tauri://drag-drop', async event => {
+                await handleDropPayload(event.payload)
+            })
+        )
+
+        unlistenFns.push(
+            await listen('tauri://drag-over', () => {
+                if (!isUploadMode.value) {
+                    isDragOver.value = false
+                    return
+                }
+                isDragOver.value = true
+            })
+        )
+
+        unlistenFns.push(
+            await listen('tauri://drag-leave', () => {
+                isDragOver.value = false
+            })
+        )
+    } catch (error) {
+        console.error('Failed to setup drag-drop listeners: ', error)
+        utilsStore.showMessage(`Failed to setup drag-drop listeners: ${error}`, 'error')
+    }
+
+    return cleanup
 }
 
 const isDomFileDragEvent = (event: DragEvent) => {
+
     const dataTransfer = event.dataTransfer
     if (!dataTransfer) return false
-    return Array.from(dataTransfer.types || []).includes('Files')
+    const types = Array.from(dataTransfer.types || [])
+    return (
+        types.includes('Files') ||
+        types.includes('text/uri-list') ||
+        types.includes('text/plain')
+    )
 }
 
 const buildDomDroppedFilePayload = (event: DragEvent) => {
@@ -1794,14 +1887,19 @@ const buildDomDroppedFilePayload = (event: DragEvent) => {
             return anyFile.path || file.webkitRelativePath || ''
         })
         .filter(path => !!path)
+    const uriList = event.dataTransfer?.getData('text/uri-list') || ''
+    const plainText = event.dataTransfer?.getData('text/plain') || ''
     return {
         files,
         paths,
-        value: paths.join('\n')
+        uriList,
+        text: plainText,
+        value: [paths.join('\n'), uriList, plainText].filter(Boolean).join('\n')
     }
 }
 
 const setupDomFileDragDrop = () => {
+
     let dragDepth = 0
 
     const handleDragEnter = (event: DragEvent) => {
@@ -1838,7 +1936,11 @@ const setupDomFileDragDrop = () => {
         event.preventDefault()
         dragDepth = 0
         isDragOver.value = false
-        await handleDroppedFiles(buildDomDroppedFilePayload(event))
+        const payload = buildDomDroppedFilePayload(event)
+        if (extractDroppedVideoPaths(payload).length === 0) {
+            return
+        }
+        await handleDroppedFiles(payload)
     }
 
     document.addEventListener('dragenter', handleDragEnter)
@@ -2182,6 +2284,54 @@ const getDerivedVideoGroup = (video: any) => {
     }
 }
 
+const getGroupedRolePriority = (role: DubbingRole | null) => {
+    if (role === '中配') return 0
+    if (role === '熟肉') return 1
+    return 2
+}
+
+const sortVideosInGroupByRole = (videos: any[]) =>
+    videos
+        .map((video, index) => {
+            const { grouped, role } = getDerivedVideoGroup(video)
+            return {
+                video,
+                index,
+                priority: grouped ? getGroupedRolePriority(role) : 2
+            }
+        })
+        .sort((a, b) => a.priority - b.priority || a.index - b.index)
+        .map(item => item.video)
+
+const sortVideosByGroupedRoleSlots = (videos: any[]) => {
+    if (!Array.isArray(videos) || videos.length < 2) {
+        return Array.isArray(videos) ? [...videos] : []
+    }
+
+    const sortedVideos = [...videos]
+    const groupedSlots = new Map<string, { indices: number[]; videos: any[] }>()
+
+    videos.forEach((video, index) => {
+        const { grouped, key, role } = getDerivedVideoGroup(video)
+        if (!grouped || !role) return
+        if (!groupedSlots.has(key)) {
+            groupedSlots.set(key, { indices: [], videos: [] })
+        }
+        const slot = groupedSlots.get(key)!
+        slot.indices.push(index)
+        slot.videos.push(video)
+    })
+
+    for (const slot of groupedSlots.values()) {
+        const ordered = sortVideosInGroupByRole(slot.videos)
+        slot.indices.forEach((index, idx) => {
+            sortedVideos[index] = ordered[idx]
+        })
+    }
+
+    return sortedVideos
+}
+
 const hasMatchedVideoGroups = (videos: any[]) => {
     const grouped = new Map<string, Set<string>>()
     for (const video of videos || []) {
@@ -2466,7 +2616,7 @@ const getNextUploadBatch = (videos: any[]) => {
         const group = groupedByKey.get(groupKey)!
         if (group.roles.has('中配') && group.roles.has('熟肉')) {
             return {
-                videos: group.videos,
+                videos: sortVideosInGroupByRole(group.videos),
                 grouped: true,
                 groupKey,
                 reason: ''
@@ -2521,7 +2671,7 @@ const getNextSubmitBatch = (videos: any[]) => {
     for (const key of orderedGroupKeys) {
         const group = groupedByKey.get(key)!
         if (group.roles.has('中配') && group.roles.has('熟肉')) {
-            return group.videos
+            return sortVideosInGroupByRole(group.videos)
         }
     }
 
@@ -2531,9 +2681,13 @@ const getNextSubmitBatch = (videos: any[]) => {
 const sanitizeDroppedPath = (rawPath: string) => {
     let normalized = rawPath.trim()
     if (!normalized) return ''
+    if (normalized.startsWith('#')) return ''
+    normalized = normalized.replace(/^['"]+|['"]+$/g, '')
+    if (!normalized) return ''
+    normalized = normalized.replace(/^\\\\\?\\/, '')
 
     if (/^file:\/\//i.test(normalized)) {
-        normalized = normalized.replace(/^file:\/+/, '')
+        normalized = normalized.replace(/^file:\/\/(?:localhost\/)?/i, '')
         try {
             normalized = decodeURIComponent(normalized)
         } catch {
@@ -2549,9 +2703,33 @@ const sanitizeDroppedPath = (rawPath: string) => {
 
 const splitRawDroppedPaths = (rawValue: string): string[] =>
     rawValue
-        .split(/[\r\n\0]+/)
+        .split(/[\r\n\0\t]+/)
         .map(item => item.trim())
+        .map(item => item.replace(/^\uFEFF/, ''))
         .filter(Boolean)
+
+const droppedVideoExtFilter = new Set([
+    'mp4',
+    'flv',
+    'avi',
+    'wmv',
+    'mov',
+    'webm',
+    'mpeg4',
+    'ts',
+    'mpg',
+    'rm',
+    'rmvb',
+    'mkv',
+    'm4v'
+])
+
+const isLikelyVideoPath = (value: string) => {
+    const candidate = String(value || '').trim()
+    if (!candidate) return false
+    const ext = candidate.split('.').pop()?.toLowerCase() || ''
+    return !!ext && droppedVideoExtFilter.has(ext)
+}
 
 const collectDroppedPaths = (
     source: any,
@@ -2561,6 +2739,17 @@ const collectDroppedPaths = (
     if (source == null) return
 
     if (typeof source === 'string') {
+        const text = source.trim()
+        if (
+            (text.startsWith('{') && text.endsWith('}')) ||
+            (text.startsWith('[') && text.endsWith(']'))
+        ) {
+            try {
+                collectDroppedPaths(JSON.parse(text), output, visited)
+            } catch {
+                // ignore invalid JSON text payload
+            }
+        }
         output.push(...splitRawDroppedPaths(source))
         return
     }
@@ -2585,11 +2774,16 @@ const collectDroppedPaths = (
         }
     }
 
-    const nestedFields = ['paths', 'files', 'items', 'value']
+    const nestedFields = ['paths', 'files', 'items', 'value', 'payload', 'uriList', 'text', 'data']
     for (const field of nestedFields) {
         if (objectSource[field] !== undefined) {
             collectDroppedPaths(objectSource[field], output, visited)
         }
+    }
+
+    for (const [key, value] of Object.entries(objectSource)) {
+        if (directPathFields.includes(key) || nestedFields.includes(key)) continue
+        collectDroppedPaths(value, output, visited)
     }
 }
 
@@ -2603,6 +2797,7 @@ const extractDroppedVideoPaths = (videoFiles: any): string[] => {
     for (const rawPath of collectedPaths) {
         const sanitizedPath = sanitizeDroppedPath(String(rawPath || ''))
         if (!sanitizedPath) continue
+        if (!isLikelyVideoPath(sanitizedPath)) continue
 
         const normalizedPath = normalizeVideoPath(sanitizedPath)
         if (seenNormalizedPaths.has(normalizedPath)) continue
@@ -3450,7 +3645,7 @@ const createUpload = async () => {
             const num_added = await uploadStore.createUploadTask(
                 selectedUser.value.uid,
                 currentTemplateName.value,
-                currentForm.value.videos
+                sortVideosByGroupedRoleSlots(currentForm.value.videos)
             )
             utilsStore.showMessage(`添加 ${num_added} 个文件到上传队列`, 'success')
         }
