@@ -25,7 +25,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 biliup = { git = "https://github.com/HsuJv/biliup.git", rev = "31de46a3dc56bd7d3514e9fd78f0d98b1055e193" }
 
-tauri = { version = "2", features = ["devtools"] }
+tauri = { version = "2", features = [ "protocol-asset", "devtools"] }
 tauri-plugin-opener = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"

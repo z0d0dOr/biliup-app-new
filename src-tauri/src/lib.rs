@@ -217,7 +217,8 @@ pub async fn run() {
             switch_season,
             export_logs,
             check_update,
-            console_log
+            console_log,
+            edit_video_with_watermark
         ])
         .on_window_event(|window, event| {
             match event {

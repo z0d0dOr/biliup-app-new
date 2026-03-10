@@ -19,7 +19,7 @@
                     <h2 class="app-title">Biliup APP</h2>
                     <div class="app-version">(v{{ currentVer }})</div>
                 </div>
-                                <div class="header-center">
+                <div class="header-center">
                     <el-button
                         type="warning"
                         size="small"
@@ -34,11 +34,25 @@
                     <el-button type="primary" size="small" @click="checkUpdate" title="检查更新">
                         检查更新
                     </el-button>
-                    <el-button type="warning" size="small" plain @click="switchToPublishTimeEditMode">
+                    <el-button
+                        type="warning"
+                        size="small"
+                        plain
+                        @click="switchToPublishTimeEditMode"
+                    >
                         修改发布时间
                     </el-button>
                     <el-button type="success" size="small" plain @click="switchToUploadMode">
                         上传视频
+                    </el-button>
+                    <el-button
+                        type="primary"
+                        size="small"
+                        plain
+                        @click="openVideoEditorDialog"
+                        :disabled="!hasEditableVideos"
+                    >
+                        视频编辑
                     </el-button>
                 </div>
                 <div class="header-right">
@@ -235,7 +249,10 @@
             </el-aside>
 
             <!-- 主要内容区域 -->
-            <el-main class="main-content" v-if="selectedUser || currentForm || isPublishTimeEditMode">
+            <el-main
+                class="main-content"
+                v-if="selectedUser || currentForm || isPublishTimeEditMode"
+            >
                 <div class="content-wrapper" ref="contentWrapperRef">
                     <div v-if="!selectedUser" class="no-selection">
                         <el-empty description="请选择用户和模板开始使用" />
@@ -380,7 +397,9 @@
                                                     plain
                                                     size="small"
                                                     :loading="titleTranslating"
-                                                    :disabled="templateLoading || !canTranslateTitle"
+                                                    :disabled="
+                                                        templateLoading || !canTranslateTitle
+                                                    "
                                                     @click="handleManualTranslateTitle"
                                                 >
                                                     翻译
@@ -991,6 +1010,11 @@
                     reloadTemplateFromAV(selectedUser.uid, currentTemplate.aid)
             "
         />
+        <VideoEditorDialog
+            v-model="showVideoEditorDialog"
+            :videos="currentForm?.videos || []"
+            @export-success="handleVideoEditorExportSuccess"
+        />
 
         <!-- 翻译配置 -->
         <el-dialog
@@ -1091,6 +1115,7 @@ import UserList from '../components/UserList.vue'
 import VideoStatus from '../components/VideoStatus.vue'
 import TagView from '../components/TagView.vue'
 import PublishTimeEditor from '../components/PublishTimeEditor.vue'
+import VideoEditorDialog from '../components/VideoEditorDialog.vue'
 
 const authStore = useAuthStore()
 const userConfigStore = useUserConfigStore()
@@ -1121,6 +1146,16 @@ const switchToUploadMode = () => {
 const switchToPublishTimeEditMode = () => {
     mainPanelMode.value = 'publishTimeEdit'
 }
+const openVideoEditorDialog = () => {
+    if (!hasEditableVideos.value) {
+        utilsStore.showMessage('请先选择本地视频文件', 'warning')
+        return
+    }
+    if (!isUploadMode.value) {
+        switchToUploadMode()
+    }
+    showVideoEditorDialog.value = true
+}
 const showNewTemplateDialog = ref(false)
 const showLoginDialog = ref(false)
 const showGlobalConfigDialog = ref(false)
@@ -1132,6 +1167,7 @@ const templateLoading = ref(false) // 模板加载状锁
 
 // 视频状对话框
 const showVideoStatusDialog = ref(false)
+const showVideoEditorDialog = ref(false)
 
 const DEFAULT_TRANSLATION_PROMPT =
     'You are a professional video title translator. Translate the input title into concise, natural Simplified Chinese. Keep product names, proper nouns, and abbreviations accurate. Output only the translated title without explanation or quotes.'
@@ -1221,7 +1257,9 @@ const checkAutoSubmitAll = async () => {
             const targetVideoIds = autoSubmittingGroupRecord.value[templateKey] || []
             const targetVideos =
                 targetVideoIds.length > 0
-                    ? template.videos.filter(video => targetVideoIds.includes(String(video.id || '')))
+                    ? template.videos.filter(video =>
+                          targetVideoIds.includes(String(video.id || ''))
+                      )
                     : template.videos
 
             const allUploaded =
@@ -1303,7 +1341,10 @@ const performTemplateSubmit = async (uid: number, templateName: string, template
                         return !submittedGroupKeys.has(key)
                     })
 
-                    if (selectedUser.value?.uid === uid && currentTemplateName.value === templateName) {
+                    if (
+                        selectedUser.value?.uid === uid &&
+                        currentTemplateName.value === templateName
+                    ) {
                         syncTitleFromGroupedVideos()
                         await autoTranslateCurrentTitle()
                     }
@@ -1332,7 +1373,10 @@ const performTemplateSubmit = async (uid: number, templateName: string, template
                     const season_title =
                         utilsStore.seasonlist.find((s: any) => s.season_id === template.season_id)
                             ?.title || template.season_id
-                    utilsStore.showMessage(`视频 ${resp.bvid} 已加入合集 ${season_title}`, 'success')
+                    utilsStore.showMessage(
+                        `视频 ${resp.bvid} 已加入合集 ${season_title}`,
+                        'success'
+                    )
                     console.log(`视频 ${resp.bvid} 已加入合集 ${season_title}`)
                 }
             } catch (error) {
@@ -1463,6 +1507,14 @@ const videos = computed({
             currentForm.value.videos = value
         }
     }
+})
+
+const hasEditableVideos = computed(() => {
+    return Boolean(
+        currentForm.value?.videos?.some(
+            video => typeof video?.path === 'string' && video.path.trim() !== ''
+        )
+    )
 })
 
 // 棢查指定模板是否有未保存的改动
@@ -1868,14 +1920,11 @@ const setupDragAndDrop = async () => {
 }
 
 const isDomFileDragEvent = (event: DragEvent) => {
-
     const dataTransfer = event.dataTransfer
     if (!dataTransfer) return false
     const types = Array.from(dataTransfer.types || [])
     return (
-        types.includes('Files') ||
-        types.includes('text/uri-list') ||
-        types.includes('text/plain')
+        types.includes('Files') || types.includes('text/uri-list') || types.includes('text/plain')
     )
 }
 
@@ -1899,7 +1948,6 @@ const buildDomDroppedFilePayload = (event: DragEvent) => {
 }
 
 const setupDomFileDragDrop = () => {
-
     let dragDepth = 0
 
     const handleDragEnter = (event: DragEvent) => {
@@ -2202,10 +2250,15 @@ const getCardDisplayName = (cardType: string): string => {
 
 type DubbingRole = '中配' | '熟肉'
 
-const normalizeVideoPath = (videoPath: string) => videoPath.trim().replace(/\//g, '\\').toLowerCase()
+const normalizeVideoPath = (videoPath: string) =>
+    videoPath.trim().replace(/\//g, '\\').toLowerCase()
 
 const normalizeGroupKey = (title: string) =>
-    title.normalize('NFKC').replace(/\u3000/g, ' ').replace(/\s+/g, ' ').trim()
+    title
+        .normalize('NFKC')
+        .replace(/\u3000/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
 
 const parseVideoNameForGrouping = (nameWithoutExt: string) => {
     const displayTitle = nameWithoutExt.trim()
@@ -2571,9 +2624,7 @@ const getNextUploadBatch = (videos: any[]) => {
     })
 
     const queuedVideoIds = new Set(
-        templateTasks
-            .map(task => String(task.video?.id || ''))
-            .filter(id => id.length > 0)
+        templateTasks.map(task => String(task.video?.id || '')).filter(id => id.length > 0)
     )
 
     const pendingVideos = allVideos.filter(video => {
@@ -2731,11 +2782,7 @@ const isLikelyVideoPath = (value: string) => {
     return !!ext && droppedVideoExtFilter.has(ext)
 }
 
-const collectDroppedPaths = (
-    source: any,
-    output: string[],
-    visited: Set<any> = new Set<any>()
-) => {
+const collectDroppedPaths = (source: any, output: string[], visited: Set<any> = new Set<any>()) => {
     if (source == null) return
 
     if (typeof source === 'string') {
@@ -3306,15 +3353,11 @@ const handleTemplateCommand = async (command: string, user: any, template: any) 
         case 'delete':
             try {
                 const template_name = template.name || currentTemplateName.value
-                await ElMessageBox.confirm(
-                    `确定要删除模板 "${template_name}" 吗？`,
-                    '确认删除',
-                    {
+                await ElMessageBox.confirm(`确定要删除模板 "${template_name}" 吗？`, '确认删除', {
                     confirmButtonText: '确定',
                     cancelButtonText: '取消',
                     type: 'warning'
-                    }
-                )
+                })
 
                 await userConfigStore.removeUserTemplate(user.uid, template_name)
 
@@ -3526,6 +3569,19 @@ const selectVideoWithTauri = async () => {
     } finally {
         templateLoading.value = false
     }
+}
+
+const handleVideoEditorExportSuccess = async (payload: {
+    outputPath: string
+    inputPath: string
+}) => {
+    const addedCount = await addVideoToCurrentForm(payload.outputPath)
+    if (addedCount > 0) {
+        syncTitleFromGroupedVideos()
+        utilsStore.showMessage(`导出视频已加入模板: ${payload.outputPath}`, 'success')
+        return
+    }
+    utilsStore.showMessage(`导出成功，但未加入列表（可能已存在）: ${payload.inputPath}`, 'info')
 }
 
 // 清空扢有文?
@@ -3818,7 +3874,10 @@ const submitTemplate = async () => {
                                 selectedUser.value.uid,
                                 currentTemplateName.value,
                                 autoSubmittingGroupRecord.value[
-                                    getTemplateKey(selectedUser.value.uid, currentTemplateName.value)
+                                    getTemplateKey(
+                                        selectedUser.value.uid,
+                                        currentTemplateName.value
+                                    )
                                 ] || []
                             )
                         } catch (error) {
@@ -4031,15 +4090,11 @@ const checkVideoStatus = async () => {
 
     try {
         // 先刷新模板数?
-        await ElMessageBox.confirm(
-            '此操作会重新拉取模板数据，未保存的更改将丢失，是否继续？',
-            '',
-            {
-                confirmButtonText: '刷新并继续',
-                cancelButtonText: '不刷新，仅查看当前',
-                type: 'info'
-            }
-        )
+        await ElMessageBox.confirm('此操作会重新拉取模板数据，未保存的更改将丢失，是否继续？', '', {
+            confirmButtonText: '刷新并继续',
+            cancelButtonText: '不刷新，仅查看当前',
+            type: 'info'
+        })
         await reloadTemplateFromAV(selectedUser.value.uid, currentTemplate.value.aid)
         // 然后显示状对话框
         showVideoStatusDialog.value = true
@@ -4057,15 +4112,11 @@ const checkUpdate = async () => {
         if (updateInfo) {
             // 如果有更新，显示确认对话?
             try {
-                await ElMessageBox.confirm(
-                    `发现新版本 ${updateInfo}，是否前往下载？`,
-                    '发现更新',
-                    {
-                        confirmButtonText: '前往下载',
-                        cancelButtonText: '稍后再说',
-                        type: 'info'
-                    }
-                )
+                await ElMessageBox.confirm(`发现新版本 ${updateInfo}，是否前往下载？`, '发现更新', {
+                    confirmButtonText: '前往下载',
+                    cancelButtonText: '稍后再说',
+                    type: 'info'
+                })
                 // 用户确认后打弢下载页面
                 await openUrl(`https://github.com/biliup/biliup-app-new/releases/tag/${updateInfo}`)
             } catch {
